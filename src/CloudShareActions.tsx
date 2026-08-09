@@ -1,5 +1,6 @@
 import { useState } from "react";
 import { revokeSavedShare, uploadShare } from "./lib/tauri";
+import { DEFAULT_SHARE_SERVICE_BASE_URL } from "./lib/share-service";
 import type { ExportRelaypackResult, UploadShareResult } from "./types";
 
 type CloudShareActionsProps = {
@@ -30,11 +31,7 @@ export default function CloudShareActions({
   onNotice,
   onHistoryChanged,
 }: CloudShareActionsProps) {
-  const [serviceBaseUrl, setServiceBaseUrl] = useState(
-    () => window.localStorage.getItem("relay.shareService") ?? "http://127.0.0.1:8787",
-  );
   const [expiresInSeconds, setExpiresInSeconds] = useState(7 * 24 * 60 * 60);
-  const [uploadToken, setUploadToken] = useState("");
   const [share, setShare] = useState<UploadShareResult | null>(null);
   const [revoked, setRevoked] = useState(false);
   const [revokeConfirming, setRevokeConfirming] = useState(false);
@@ -45,16 +42,13 @@ export default function CloudShareActions({
     setBusy("upload");
     setError(null);
     try {
-      const base = serviceBaseUrl.trim();
-      window.localStorage.setItem("relay.shareService", base);
       const result = await uploadShare({
         package_path: pack.package_path,
         key: pack.key_fragment,
-        service_base_url: base,
+        service_base_url: DEFAULT_SHARE_SERVICE_BASE_URL,
         project_title: pack.preview.title,
         project_name: pack.preview.project_name,
         expires_in_seconds: expiresInSeconds,
-        upload_token: uploadToken.trim() || undefined,
       });
       setShare(result);
       setRevoked(false);
@@ -135,11 +129,7 @@ export default function CloudShareActions({
       ) : (
         <>
           <p className="cloud-share-intro">接收者可以直接在浏览器中查看分享，无需先安装 Relay。拥有完整链接的人都能读取内容；上传前请确认接收者和有效期。</p>
-          <div className="cloud-share-grid">
-            <label>
-              <span>分享服务</span>
-              <input value={serviceBaseUrl} onChange={(event) => setServiceBaseUrl(event.target.value)} spellCheck={false} />
-            </label>
+          <div className="cloud-share-grid is-single">
             <label>
               <span>有效期</span>
               <select value={expiresInSeconds} onChange={(event) => setExpiresInSeconds(Number(event.target.value))}>
@@ -149,12 +139,9 @@ export default function CloudShareActions({
               </select>
             </label>
           </div>
-          <label className="upload-token-field">
-            <span>服务上传令牌（可选）</span>
-            <input type="password" value={uploadToken} onChange={(event) => setUploadToken(event.target.value)} autoComplete="off" />
-          </label>
+          <p className="cloud-service-note">Relay 只上传已经加密的分享包，服务端无法读取聊天记录、代码和解密密钥。</p>
           {error ? <p className="cloud-share-error">{error}</p> : null}
-          <button className="cloud-upload-button" type="button" onClick={() => void upload()} disabled={busy !== null || !serviceBaseUrl.trim()}>
+          <button className="cloud-upload-button" type="button" onClick={() => void upload()} disabled={busy !== null}>
             {busy === "upload" ? "正在上传密文" : "生成分享链接并复制"}
           </button>
         </>

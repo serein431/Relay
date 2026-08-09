@@ -5,6 +5,7 @@ import {
   launchAgent,
   restoreRelaypack,
 } from "./lib/tauri";
+import { shareServiceOriginFromLink } from "./lib/share-service";
 import type {
   AgentKind,
   InspectRelaypackResult,
@@ -144,9 +145,6 @@ function launchMessage(result: LaunchAgentResult): string {
 
 export default function ReceivePanel({ home, onNotice }: ReceivePanelProps) {
   const [source, setSource] = useState<ReceiveSource>("share_link");
-  const [serviceBaseUrl, setServiceBaseUrl] = useState(
-    () => window.localStorage.getItem("relay.shareService") ?? "http://127.0.0.1:8787",
-  );
   const [shareUrl, setShareUrl] = useState("");
   const [downloadPath, setDownloadPath] = useState(() => defaultDownloadPath(home));
   const [packagePath, setPackagePath] = useState("");
@@ -175,8 +173,7 @@ export default function ReceivePanel({ home, onNotice }: ReceivePanelProps) {
     try {
       let result: InspectRelaypackResult;
       if (source === "share_link") {
-        const base = serviceBaseUrl.trim();
-        window.localStorage.setItem("relay.shareService", base);
+        const base = shareServiceOriginFromLink(shareUrl);
         const downloaded = await downloadShare({
           share_url: shareUrl.trim(),
           service_base_url: base,
@@ -258,7 +255,7 @@ export default function ReceivePanel({ home, onNotice }: ReceivePanelProps) {
 
   const canInspect =
     source === "share_link"
-      ? Boolean(shareUrl.trim() && serviceBaseUrl.trim() && downloadPath.trim())
+      ? Boolean(shareUrl.trim() && downloadPath.trim())
       : Boolean(packagePath.trim() && key.trim());
   const canRestore = Boolean(
     inspection && targetPath.trim() && (
@@ -336,19 +333,9 @@ export default function ReceivePanel({ home, onNotice }: ReceivePanelProps) {
                   <textarea
                     value={shareUrl}
                     onChange={(event) => setShareUrl(event.target.value)}
-                    placeholder="https://share.example/s/v1/...#k=..."
+                    placeholder="粘贴 Relay 生成的完整分享链接"
                     spellCheck={false}
                   />
-                </label>
-                <label>
-                  <span>可信分享服务</span>
-                  <input
-                    value={serviceBaseUrl}
-                    onChange={(event) => setServiceBaseUrl(event.target.value)}
-                    placeholder="https://share.example"
-                    spellCheck={false}
-                  />
-                  <small>正式服务必须使用 HTTPS；本机调试允许 127.0.0.1 或 localhost。</small>
                 </label>
                 <label>
                   <span>保存密文包</span>

@@ -8,7 +8,7 @@
     "enabled": false
   },
   "vars": {
-    "PUBLIC_BASE_URL": "https://share.example.com",
+    "PUBLIC_BASE_URL": "https://relay-share.relay-share-cloud.workers.dev",
     "ALLOWED_ORIGINS": "tauri://localhost,http://tauri.localhost",
     "MAX_CIPHERTEXT_BYTES": "33554432",
     "DEFAULT_TTL_SECONDS": "604800",

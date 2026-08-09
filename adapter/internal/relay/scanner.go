@@ -310,6 +310,12 @@ func codexCandidates(home string) ([]candidate, []Warning) {
 			if err != nil || !fileInfo.Mode().IsRegular() {
 				return nil
 			}
+			// ChatGPT stores spawned subagents as standalone rollout files. They
+			// inherit much of the parent conversation, but they are not separate
+			// user-facing tasks and must not appear in Relay's session list.
+			if codexCandidateIsSubagent(path) {
+				return nil
+			}
 			out = append(out, candidate{agent: AgentCodex, home: home, path: path, mod: fileInfo.ModTime(), name: strings.TrimSuffix(entry.Name(), filepath.Ext(entry.Name()))})
 			return nil
 		})
@@ -321,6 +327,29 @@ func codexCandidates(home string) ([]candidate, []Warning) {
 		warnings = append(warnings, Warning{Code: "codex_home_missing", Message: "No Codex sessions found under: " + home})
 	}
 	return out, warnings
+}
+
+func codexCandidateIsSubagent(path string) bool {
+	file, err := os.Open(path)
+	if err != nil {
+		return false
+	}
+	defer file.Close()
+
+	scanner := bufio.NewScanner(file)
+	scanner.Buffer(make([]byte, 64*1024), 1024*1024)
+	for line := 0; line < 64 && scanner.Scan(); line++ {
+		var record map[string]any
+		if json.Unmarshal(scanner.Bytes(), &record) != nil || stringValue(record["type"]) != "session_meta" {
+			continue
+		}
+		payload := mapValue(record["payload"])
+		source := mapValue(payload["source"])
+		if _, isSubagent := source["subagent"]; isSubagent {
+			return true
+		}
+	}
+	return false
 }
 
 func findClaudeCandidate(home, sessionID string) (candidate, error) {

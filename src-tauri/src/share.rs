@@ -572,17 +572,7 @@ fn service_response_error(
         .and_then(|error| error.get("code"))
         .and_then(Value::as_str)
         .map(str::to_owned);
-    let message = structured
-        .as_ref()
-        .and_then(|value| {
-            value
-                .get("error")
-                .and_then(|error| error.get("message"))
-                .or_else(|| value.get("message"))
-                .and_then(Value::as_str)
-                .map(str::to_owned)
-        })
-        .unwrap_or_else(|| format!("share service returned HTTP {status}"));
+    let message = localized_service_error(service_error_code.as_deref(), status);
     let mut details = Map::new();
     details.insert("http_status".into(), Value::from(status));
     if let Some(service_error_code) = service_error_code {
@@ -595,6 +585,30 @@ fn service_response_error(
         details.insert("retry_after".into(), Value::String(retry_after));
     }
     CommandError::new(code, message).with_details(Value::Object(details))
+}
+
+fn localized_service_error(code: Option<&str>, status: u16) -> String {
+    match code {
+        Some("rate_limited") => "操作过于频繁，请稍后重试。".into(),
+        Some("share_not_found") => "这个分享不存在、已经到期或已经撤销。".into(),
+        Some("share_not_ready") => "分享包还没有上传完成，请稍后重试。".into(),
+        Some("upload_expired") => "上传时间已过，请重新生成分享链接。".into(),
+        Some("request_too_large") | Some("ciphertext_too_large") => {
+            "分享包超过服务允许的大小。".into()
+        }
+        Some("invalid_upload_token") | Some("upload_token_required") => {
+            "分享服务拒绝了上传凭据，请重新生成分享链接。".into()
+        }
+        Some("ciphertext_size_conflict")
+        | Some("ciphertext_digest_conflict")
+        | Some("ciphertext_checksum_mismatch")
+        | Some("stored_ciphertext_invalid") => {
+            "上传内容与分享包校验信息不一致，请重新导出后再试。".into()
+        }
+        Some("origin_not_allowed") => "当前应用无法访问分享服务，请更新 Relay 后重试。".into(),
+        _ if status >= 500 => "分享服务暂时无法处理请求，请稍后重试。".into(),
+        _ => format!("分享服务没有接受这次请求（HTTP {status}）。"),
+    }
 }
 
 fn add_error_details(mut error: CommandError, additions: Value) -> CommandError {
@@ -636,11 +650,11 @@ fn redact_error_secrets<'a>(
 
 fn map_http_error(error: reqwest::Error) -> CommandError {
     let message = if error.is_timeout() {
-        "share service request timed out"
+        "连接分享服务超时，请检查网络或代理设置后重试。"
     } else if error.is_connect() {
-        "cannot connect to the share service"
+        "无法连接分享服务，请检查网络或代理设置后重试。"
     } else {
-        "share service request failed"
+        "分享服务请求失败，请稍后重试。"
     };
     CommandError::new("share_network_error", message)
 }
@@ -979,7 +993,7 @@ mod tests {
     }
 
     #[test]
-    fn structured_worker_error_code_and_message_are_preserved() {
+    fn structured_worker_error_code_is_preserved_and_message_is_localized() {
         let conflict = serde_json::json!({
             "error": {
                 "code": "ciphertext_digest_conflict",
@@ -996,7 +1010,7 @@ mod tests {
         assert_eq!(error.code, "share_upload_failed");
         assert_eq!(
             error.message,
-            "The ciphertext digest differs from the reservation."
+            "上传内容与分享包校验信息不一致，请重新导出后再试。"
         );
         assert_eq!(
             error
@@ -1040,7 +1054,10 @@ mod tests {
         );
         let public = serde_json::to_string(&error).unwrap();
         assert!(!public.contains(&capability));
-        assert!(error.message.contains("[redacted]"));
+        assert_eq!(
+            error.message,
+            "分享服务拒绝了上传凭据，请重新生成分享链接。"
+        );
     }
 
     #[test]

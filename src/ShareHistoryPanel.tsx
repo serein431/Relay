@@ -253,7 +253,6 @@ export default function ShareHistoryPanel({
                   <div><dt>创建</dt><dd>{formatDate(record.created_at)}</dd></div>
                   <div><dt>到期</dt><dd>{formatDate(record.expires_at)}</dd></div>
                   <div><dt>密文</dt><dd>{formatBytes(record.ciphertext_bytes)}</dd></div>
-                  <div><dt>服务</dt><dd>{record.service_base_url}</dd></div>
                 </dl>
 
                 <div className="history-package-row">

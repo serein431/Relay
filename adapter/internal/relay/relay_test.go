@@ -220,6 +220,48 @@ func TestDiscoverGroupsSessionsByProjectMetadata(t *testing.T) {
 	}
 }
 
+func TestDiscoverExcludesCodexSubagentRollouts(t *testing.T) {
+	root := t.TempDir()
+	claudeHome := filepath.Join(root, "claude")
+	codexHome := filepath.Join(root, "codex")
+	sessionsDir := filepath.Join(codexHome, "sessions", "2026", "08", "08")
+	if err := os.MkdirAll(sessionsDir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+
+	mainPath := filepath.Join(sessionsDir, "rollout-2026-08-08T00-00-00-main-session.jsonl")
+	mainContent := strings.Join([]string{
+		`{"timestamp":"2026-08-08T00:00:00Z","type":"session_meta","payload":{"id":"main-session","timestamp":"2026-08-08T00:00:00Z","cwd":"/tmp/relay","source":"vscode"}}`,
+		`{"timestamp":"2026-08-08T00:00:01Z","type":"response_item","payload":{"type":"message","id":"main-user","role":"user","content":[{"type":"input_text","text":"Main task"}]}}`,
+	}, "\n") + "\n"
+	if err := os.WriteFile(mainPath, []byte(mainContent), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	subagentPath := filepath.Join(sessionsDir, "rollout-2026-08-08T00-01-00-subagent-session.jsonl")
+	subagentContent := strings.Join([]string{
+		`{"timestamp":"2026-08-08T00:01:00Z","type":"session_meta","payload":{"id":"subagent-session","timestamp":"2026-08-08T00:01:00Z","cwd":"/tmp/relay","source":{"subagent":{"thread_spawn":{"parent_thread_id":"main-session","depth":1,"agent_path":"/root/reviewer"}}}}}`,
+		`{"timestamp":"2026-08-08T00:01:00Z","type":"session_meta","payload":{"id":"main-session","timestamp":"2026-08-08T00:00:00Z","cwd":"/tmp/relay","source":"vscode"}}`,
+		`{"timestamp":"2026-08-08T00:01:01Z","type":"response_item","payload":{"type":"message","id":"subagent-assistant","role":"assistant","content":[{"type":"output_text","text":"Subagent work"}]}}`,
+	}, "\n") + "\n"
+	if err := os.WriteFile(subagentPath, []byte(subagentContent), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	result, err := Discover(DiscoverOptions{
+		Agents:     []string{AgentCodex},
+		ClaudeHome: claudeHome,
+		CodexHome:  codexHome,
+		Limit:      20,
+	}, time.Date(2026, 8, 8, 1, 0, 0, 0, time.UTC))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(result.Sessions) != 1 || result.Sessions[0].SessionID != "main-session" {
+		t.Fatalf("subagent rollout was exposed as a user session: %+v", result.Sessions)
+	}
+}
+
 func TestInspectAndExportDoNotModifyProviderHomes(t *testing.T) {
 	claudeHome := fixturePath(t, "claude_home")
 	codexHome := fixturePath(t, "codex_home")

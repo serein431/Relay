@@ -2,6 +2,8 @@
 
 这个目录是 Relay 的最小 Cloudflare 分享服务。它只保存客户端已经加密的二进制包，不解密、不解析包内容，也不接受项目名、会话标题、Git remote 或本机路径。
 
+当前公开实例为 `https://relay-share.relay-share-cloud.workers.dev`。桌面应用默认使用这个地址；自行部署时再修改 `PUBLIC_BASE_URL`。
+
 服务由三部分组成：
 
 - Worker 提供 HTTP API 和接收页面。
