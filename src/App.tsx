@@ -154,6 +154,7 @@ function issueTitle(issue: WorkspaceLoadIssue): string {
   if (issue.code === "codex_home_missing") return "没有找到 ChatGPT 会话目录";
   if (issue.code === "claude_scan_failed") return "部分 Claude Code 会话无法读取";
   if (issue.code === "codex_scan_failed") return "部分 ChatGPT 会话无法读取";
+  if (issue.code === "session_too_large") return "一条超大会话未显示";
   if (issue.code === "adapter_not_found") return "找不到会话读取组件";
   if (issue.code === "adapter_timeout") return "会话读取组件响应超时";
   if (issue.code === "adapter_incompatible") return "会话读取组件版本不兼容";
@@ -179,6 +180,35 @@ export function nativeErrorCode(error: unknown): string | undefined {
   if (typeof error !== "object" || error === null || !("code" in error)) return undefined;
   const code = (error as { code: unknown }).code;
   return typeof code === "string" && code.trim() ? code : undefined;
+}
+
+export function reconcilePreviewSelection(
+  latest: SessionContentPreview,
+  excludedMessageIds: string[],
+  excludedBlocks: ExcludedContentBlock[],
+): { excludedMessageIds: string[]; excludedBlocks: ExcludedContentBlock[] } {
+  const messages = new Map(
+    latest.conversation.messages.map((message) => [message.id, message]),
+  );
+  return {
+    excludedMessageIds: excludedMessageIds.filter((messageId) => messages.has(messageId)),
+    excludedBlocks: excludedBlocks.filter((block) => {
+      const message = messages.get(block.message_id);
+      return Boolean(message?.blocks[block.block_index]);
+    }),
+  };
+}
+
+export function previewUpdateMessage(
+  previous: SessionContentPreview,
+  latest: SessionContentPreview,
+): string {
+  const previousIds = new Set(previous.conversation.messages.map((message) => message.id));
+  const added = latest.conversation.messages.filter((message) => !previousIds.has(message.id)).length;
+  if (added > 0) {
+    return `会话刚刚新增了 ${added} 条记录。Relay 已重新读取最新内容，并保留仍然有效的选择；请检查新增内容后再次生成。`;
+  }
+  return "会话内容刚刚发生变化。Relay 已重新读取最新内容，并保留仍然有效的选择；请再次检查后生成。";
 }
 
 function sensitiveFindingsFromError(error: unknown): SensitiveExportFinding[] {
@@ -358,6 +388,7 @@ function App() {
   const [selectedUntracked, setSelectedUntracked] = useState<string[]>([]);
   const [packResult, setPackResult] = useState<ExportRelaypackResult | null>(null);
   const [packError, setPackError] = useState<string | null>(null);
+  const [packReviewNotice, setPackReviewNotice] = useState<string | null>(null);
   const [gitUnavailableNotice, setGitUnavailableNotice] = useState<string | null>(null);
   const [packBusy, setPackBusy] = useState(false);
   const [sensitiveSelectedCount, setSensitiveSelectedCount] = useState(0);
@@ -440,6 +471,7 @@ function App() {
     setContentSelectionSummary(null);
     setBackendSensitiveFindings([]);
     setSensitiveAcknowledged(false);
+    setPackReviewNotice(null);
   }, [activeSessionIdentity]);
 
   useEffect(() => {
@@ -507,6 +539,7 @@ function App() {
     }
     setPackBusy(true);
     setPackError(null);
+    setPackReviewNotice(null);
     setGitUnavailableNotice(null);
     setPackResult(null);
     setRepository(null);
@@ -575,6 +608,7 @@ function App() {
     }
     setPackBusy(true);
     setPackError(null);
+    setPackReviewNotice(null);
     try {
       const result = await exportRelaypack({
         agent: activeSession.agent,
@@ -610,6 +644,29 @@ function App() {
       setBackendSensitiveFindings([]);
       setPackResult(result);
     } catch (error) {
+      if (nativeErrorCode(error) === "session_preview_changed") {
+        try {
+          const latest = await previewSession({
+            agent: activeSession.agent,
+            session_id: activeSession.id,
+          });
+          const reconciled = reconcilePreviewSelection(
+            latest,
+            excludedMessageIds,
+            excludedBlocks,
+          );
+          setContentPreview(latest);
+          setExcludedMessageIds(reconciled.excludedMessageIds);
+          setExcludedBlocks(reconciled.excludedBlocks);
+          setBackendSensitiveFindings([]);
+          setSensitiveAcknowledged(false);
+          setPackReviewNotice(previewUpdateMessage(contentPreview, latest));
+          return;
+        } catch (refreshError) {
+          setPackError(`会话已经更新，但重新读取失败：${errorMessage(refreshError)}`);
+          return;
+        }
+      }
       const findings = sensitiveFindingsFromError(error);
       if (findings.length > 0) {
         setBackendSensitiveFindings(findings);
@@ -773,8 +830,8 @@ function App() {
             <section className={`workspace-issues ${loadErrors.length > 0 ? "has-error" : ""}`} aria-label="本机读取状态">
               <div className="workspace-issues-heading">
                 <div>
-                  <strong>{loadErrors.length > 0 ? "部分本机数据没有读取成功" : "有些本机内容没有找到"}</strong>
-                  <span>已经读到的真实会话仍会保留，不会替换成演示数据。</span>
+                  <strong>{loadErrors.length > 0 ? "部分本机数据没有读取成功" : "有些会话未显示"}</strong>
+                  <span>{loadErrors.length > 0 ? "已经读到的会话仍会保留。" : "其余会话已经正常读取。"}</span>
                 </div>
                 <button type="button" onClick={() => void load()}>重新扫描</button>
               </div>
@@ -785,7 +842,7 @@ function App() {
                     <div>
                       <strong>{issueTitle(issue)}</strong>
                       <p>{issue.message}</p>
-                      <code>{issueStageName(issue.stage)} · {issue.code}</code>
+                      <code>{issueStageName(issue.stage)}</code>
                     </div>
                   </article>
                 ))}
@@ -1165,6 +1222,16 @@ function App() {
                   <div className="dialog-error">
                     <Icon name="warning" />
                     <div><strong>分享包暂时不能生成</strong><p>{packError}</p><small>修改选择后可以再次尝试。</small></div>
+                  </div>
+                ) : null}
+
+                {packReviewNotice ? (
+                  <div className="dialog-update">
+                    <Icon name="refresh" />
+                    <div>
+                      <strong>会话内容已更新</strong>
+                      <p>{packReviewNotice}</p>
+                    </div>
                   </div>
                 ) : null}
 

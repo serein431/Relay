@@ -100,4 +100,26 @@ describe("loadWorkspaceSnapshot", () => {
       severity: "warning",
     }));
   });
+
+  it("把超大会话说明为单条跳过，不显示英文内部错误", async () => {
+    const result = await loadWorkspaceSnapshot(runtime(true, {
+      environment_status: () => environment,
+      adapter_health: () => ({ executable_path: "/Applications/Relay.app/adapter" }),
+      discover_sessions: () => ({
+        sessions: sessions.sessions,
+        warnings: [{
+          code: "session_too_large",
+          message: "A session file exceeded the configured safety limit",
+        }],
+      }),
+    }));
+
+    expect(result.sessions).toHaveLength(1);
+    expect(result.issues).toContainEqual(expect.objectContaining({
+      code: "session_too_large",
+      severity: "warning",
+      message: expect.stringContaining("超过 256 MB"),
+    }));
+    expect(result.issues[0].message).not.toContain("configured safety limit");
+  });
 });

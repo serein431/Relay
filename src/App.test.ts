@@ -1,7 +1,13 @@
 import { describe, expect, it } from "vitest";
-import { initialOptions, nativeErrorCode, shareOptionCopy } from "./App";
+import {
+  initialOptions,
+  nativeErrorCode,
+  previewUpdateMessage,
+  reconcilePreviewSelection,
+  shareOptionCopy,
+} from "./App";
 import { groupProjects } from "./lib/projects";
-import type { SessionSummary } from "./types";
+import type { SessionContentPreview, SessionSummary } from "./types";
 
 describe("分享选项说明", () => {
   it("五类内容都有明确的范围说明", () => {
@@ -47,5 +53,40 @@ describe("分享选项说明", () => {
       message: "not inside a Git worktree",
     })).toBe("not_a_git_repository");
     expect(nativeErrorCode(new Error("network failed"))).toBeUndefined();
+  });
+
+  it("会话更新后保留仍然有效的内容选择", () => {
+    const previous = {
+      source: { agent: "codex", session_id: "session-1", read_only: true },
+      conversation: {
+        messages: [
+          { id: "message-1", role: "user", blocks: [{ kind: "text", classification: "user_visible", text: "旧内容" }] },
+          { id: "message-2", role: "assistant", blocks: [{ kind: "text", classification: "user_visible", text: "旧回复" }] },
+        ],
+      },
+    } as SessionContentPreview;
+    const latest = {
+      ...previous,
+      conversation: {
+        messages: [
+          previous.conversation.messages[0],
+          { id: "message-3", role: "assistant", blocks: [{ kind: "text", classification: "user_visible", text: "新回复" }] },
+        ],
+      },
+    } as SessionContentPreview;
+
+    expect(reconcilePreviewSelection(
+      latest,
+      ["message-1", "message-2"],
+      [
+        { message_id: "message-1", block_index: 0 },
+        { message_id: "message-2", block_index: 0 },
+        { message_id: "message-1", block_index: 9 },
+      ],
+    )).toEqual({
+      excludedMessageIds: ["message-1"],
+      excludedBlocks: [{ message_id: "message-1", block_index: 0 }],
+    });
+    expect(previewUpdateMessage(previous, latest)).toContain("新增了 1 条记录");
   });
 });
