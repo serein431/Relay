@@ -9,6 +9,15 @@ function projectDisplayName(session: SessionSummary): string {
   return sessionDateTitle(session.createdAt ?? session.updatedAt) || "临时项目";
 }
 
+function sessionTime(session: SessionSummary): number {
+  for (const value of [session.updatedAt, session.createdAt]) {
+    if (!value) continue;
+    const time = new Date(value).getTime();
+    if (!Number.isNaN(time)) return time;
+  }
+  return Number.NEGATIVE_INFINITY;
+}
+
 export function groupProjects(sessions: SessionSummary[]): ProjectGroup[] {
   const groups = new Map<string, ProjectGroup>();
   for (const session of sessions) {
@@ -25,5 +34,16 @@ export function groupProjects(sessions: SessionSummary[]): ProjectGroup[] {
     current.sessions.push(session);
     groups.set(key, current);
   }
-  return [...groups.values()].sort((a, b) => a.name.localeCompare(b.name, "zh-CN"));
+  const projects = [...groups.values()];
+  for (const project of projects) {
+    project.sessions.sort((a, b) => sessionTime(b) - sessionTime(a));
+    if (project.sessions[0]) project.name = projectDisplayName(project.sessions[0]);
+  }
+  return projects.sort((a, b) => {
+    const aTime = sessionTime(a.sessions[0]!);
+    const bTime = sessionTime(b.sessions[0]!);
+    if (aTime !== bTime) return bTime > aTime ? 1 : -1;
+    const nameDifference = a.name.localeCompare(b.name, "zh-CN");
+    return nameDifference !== 0 ? nameDifference : a.id.localeCompare(b.id);
+  });
 }
