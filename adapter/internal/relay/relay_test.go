@@ -149,6 +149,22 @@ func TestCodexSessionKeepsTheFirstSessionIdentity(t *testing.T) {
 	}
 }
 
+func TestCodexSessionUsesTheLatestTurnWorkingDirectory(t *testing.T) {
+	content := strings.Join([]string{
+		`{"type":"session_meta","payload":{"id":"moving-session","cwd":"/tmp/old-project"}}`,
+		`{"type":"turn_context","payload":{"turn_id":"turn-1","cwd":"/tmp/current-project"}}`,
+		`{"type":"response_item","payload":{"type":"message","id":"user-1","role":"user","content":[{"type":"input_text","text":"Continue in the current project"}]}}`,
+	}, "\n") + "\n"
+	options := writeTemporarySession(t, AgentCodex, "moving-session", []byte(content))
+	parsed, err := ParseSession(options)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if parsed.Summary.CWD != "/tmp/current-project" || parsed.Summary.ProjectName != "current-project" {
+		t.Fatalf("latest turn cwd was not used for project metadata: %+v", parsed.Summary)
+	}
+}
+
 func TestLegacyCodexSessionExtractsCWDWithoutExportingEnvironmentPrompt(t *testing.T) {
 	home := fixturePath(t, "codex_home")
 	parsed, err := ParseSession(SessionOptions{Agent: AgentCodex, SessionID: "legacy-session-1", ClaudeHome: fixturePath(t, "claude_home"), CodexHome: home})

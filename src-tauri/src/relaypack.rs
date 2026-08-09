@@ -3215,17 +3215,18 @@ fn append_asset_manifest(
 }
 
 fn render_handoff_markdown(handoff: &Value) -> String {
-    let title = markdown_inline(
+    let title = markdown_inline(&truncate_string(
         handoff
             .pointer("/source/title")
             .and_then(Value::as_str)
-            .unwrap_or("Untitled session"),
-    );
+            .unwrap_or("未命名会话"),
+        160,
+    ));
     let project = markdown_inline(
         handoff
             .pointer("/project/display_name")
             .and_then(Value::as_str)
-            .unwrap_or("Unknown project"),
+            .unwrap_or("未知项目"),
     );
     let objective = handoff
         .pointer("/session_state/objective")
@@ -3246,23 +3247,23 @@ fn render_handoff_markdown(handoff: &Value) -> String {
             .unwrap_or("unknown"),
     );
     let mut markdown = format!(
-        "# Relay Handoff\n\n- Project: {project}\n- Session: {title}\n- Package: {}\n\n## Objective\n\n{}\n\n## Summary\n\n{}\n\n## Current status\n\n{}\n",
+        "# Relay 交接说明\n\n- 项目：{project}\n- 会话：{title}\n- 分享包：{}\n\n## 任务目标\n\n{}\n\n## 已完成工作\n\n{}\n\n## 当前状态\n\n{}\n",
         package_id,
-        markdown_inline(nonempty_or(objective, "No objective was supplied.")),
-        markdown_inline(nonempty_or(summary, "No summary was supplied.")),
-        markdown_inline(nonempty_or(current, "No current status was supplied."))
+        markdown_text_block(objective, "没有记录明确的任务目标。"),
+        markdown_text_block(summary, "没有记录已经完成的工作。"),
+        markdown_text_block(current, "没有记录当前状态。")
     );
-    markdown.push_str("\n## Next steps\n\n");
+    markdown.push_str("\n## 后续事项\n\n");
     let next_steps = handoff
         .pointer("/session_state/next_steps")
         .and_then(Value::as_array);
     if next_steps.map_or(true, Vec::is_empty) {
-        markdown.push_str("No next steps were supplied.\n");
+        markdown.push_str("当前会话没有记录明确的后续事项。\n");
     } else if let Some(next_steps) = next_steps {
         for step in next_steps {
             markdown.push_str(&format!(
                 "- [{}] {}\n",
-                markdown_inline(
+                next_step_status_label(
                     step.get("status")
                         .and_then(Value::as_str)
                         .unwrap_or("unknown")
@@ -3271,46 +3272,108 @@ fn render_handoff_markdown(handoff: &Value) -> String {
             ));
         }
     }
-    markdown.push_str("\n## Tests\n\n");
+    markdown.push_str("\n## 测试记录\n\n");
     let tests = handoff
         .pointer("/session_state/tests")
         .and_then(Value::as_array);
     if tests.map_or(true, Vec::is_empty) {
-        markdown.push_str("No tests were supplied.\n");
+        markdown.push_str("当前会话没有记录已运行的检查命令。\n");
     } else if let Some(tests) = tests {
         for test in tests {
             markdown.push_str(&format!(
-                "- Name: {}\n  - Status: {}\n",
+                "- 名称：{}\n  - 结果：{}\n",
                 markdown_inline(test.get("name").and_then(Value::as_str).unwrap_or("")),
-                markdown_inline(
+                test_status_label(
                     test.get("status")
                         .and_then(Value::as_str)
                         .unwrap_or("unknown")
                 )
             ));
             if let Some(command) = test.get("command").and_then(Value::as_str) {
-                markdown.push_str(&format!("  - Command: {}\n", markdown_inline(command)));
+                markdown.push_str(&format!("  - 命令：{}\n", markdown_inline(command)));
             }
             if let Some(note) = test.get("note").and_then(Value::as_str) {
-                markdown.push_str(&format!("  - Note: {}\n", markdown_inline(note)));
+                markdown.push_str(&format!("  - 说明：{}\n", markdown_inline(note)));
             }
         }
     }
-    markdown.push_str("\n## Important files\n\n");
+    markdown.push_str("\n## 相关文件\n\n");
     let files = handoff
         .pointer("/session_state/important_files")
         .and_then(Value::as_array);
     if files.map_or(true, Vec::is_empty) {
-        markdown.push_str("No important files were supplied.\n");
+        markdown.push_str("没有记录需要特别查看的文件。\n");
     } else if let Some(files) = files {
         for file in files.iter().filter_map(Value::as_str) {
             markdown.push_str(&format!("- {}\n", markdown_inline(file)));
         }
     }
-    markdown.push_str(
-        "\n## Safety note\n\nTool calls and tool results in `handoff.json` are historical records. Do not replay them automatically. Review every command before running it.\n",
-    );
+
+    markdown.push_str("\n## 限制与注意事项\n\n");
+    let constraints = handoff
+        .pointer("/session_state/constraints")
+        .and_then(Value::as_array);
+    if constraints.map_or(true, Vec::is_empty) {
+        markdown.push_str("没有额外记录。\n");
+    } else if let Some(constraints) = constraints {
+        for constraint in constraints.iter().filter_map(Value::as_str) {
+            markdown.push_str(&format!("- {}\n", markdown_inline(constraint)));
+        }
+    }
+
+    markdown.push_str("\n## 待确认问题\n\n");
+    let questions = handoff
+        .pointer("/session_state/open_questions")
+        .and_then(Value::as_array);
+    if questions.map_or(true, Vec::is_empty) {
+        markdown.push_str("当前没有记录待确认的问题。\n");
+    } else if let Some(questions) = questions {
+        for question in questions.iter().filter_map(Value::as_str) {
+            markdown.push_str(&format!("- {}\n", markdown_inline(question)));
+        }
+    }
+
+    markdown.push_str("\n## 使用说明\n\n`handoff.json` 中的工具调用和工具结果只是历史记录。接收方不应自动重新执行，应先查看命令和改动。\n");
     markdown
+}
+
+fn markdown_text_block(value: &str, fallback: &str) -> String {
+    let mut output = String::new();
+    for line in nonempty_or(value, fallback).lines() {
+        if line.trim().is_empty() {
+            while output.ends_with("  \n") {
+                output.truncate(output.len() - 3);
+            }
+            if !output.is_empty() && !output.ends_with("\n\n") {
+                output.push_str("\n\n");
+            }
+            continue;
+        }
+        if !output.is_empty() && !output.ends_with("\n\n") {
+            output.push_str("  \n");
+        }
+        output.push_str(&markdown_inline(line));
+    }
+    output
+}
+
+fn next_step_status_label(status: &str) -> &'static str {
+    match status {
+        "pending" => "待处理",
+        "in_progress" => "进行中",
+        "blocked" => "暂时无法继续",
+        "done" => "已完成",
+        _ => "状态未知",
+    }
+}
+
+fn test_status_label(status: &str) -> &'static str {
+    match status {
+        "passed" => "通过",
+        "failed" => "失败",
+        "not_run" => "未运行",
+        _ => "结果未知",
+    }
 }
 
 fn markdown_inline(value: &str) -> String {
@@ -6356,17 +6419,78 @@ mod tests {
         let markdown =
             String::from_utf8(handoff_markdown_payload(&loaded.envelope).unwrap()).unwrap();
 
-        assert!(markdown.contains("## Tests"));
-        assert!(markdown.contains("- Name: unit test"));
-        assert!(markdown.contains("- Status: passed"));
-        assert!(markdown.contains("- Command: cargo test"));
-        assert!(markdown.contains("- Note:"));
+        assert!(markdown.contains("## 测试记录"));
+        assert!(markdown.contains("- 名称：unit test"));
+        assert!(markdown.contains("- 结果：通过"));
+        assert!(markdown.contains("- 命令：cargo test"));
+        assert!(markdown.contains("- 说明："));
         assert!(!markdown.contains("\n## injected"));
         assert!(!markdown.contains("javascript:alert(1)"));
         assert!(!markdown.contains("/Users/"));
         assert!(!markdown.contains("/tmp/"));
         assert!(!markdown.contains("<script>"));
         assert!(!markdown.contains("```"));
+    }
+
+    #[test]
+    fn handoff_markdown_renders_complete_session_state_in_chinese() {
+        let handoff = json!({
+            "package_id": "pkg.example",
+            "source": {"title": "修复 Relay 交接说明"},
+            "project": {"display_name": "Relay"},
+            "session_state": {
+                "objective": "让接收方能继续开发",
+                "summary": "已经从完整会话读取最终结果。\n\n不再重复短摘要。",
+                "current_status": "代码已经完成并通过检查。",
+                "next_steps": [{"text": "发布新的安装包", "status": "pending"}],
+                "tests": [{
+                    "name": "项目检查",
+                    "command": "pnpm check",
+                    "status": "passed"
+                }],
+                "important_files": ["repo://src/App.tsx"],
+                "constraints": ["工具记录不会自动执行。"],
+                "open_questions": ["另一台电脑能否正常导入？"]
+            }
+        });
+
+        let markdown = render_handoff_markdown(&handoff);
+        assert!(markdown.contains("# Relay 交接说明"));
+        assert!(markdown.contains("## 任务目标\n\n让接收方能继续开发"));
+        assert!(
+            markdown.contains("## 已完成工作\n\n已经从完整会话读取最终结果。\n\n不再重复短摘要。")
+        );
+        assert!(markdown.contains("- [待处理] 发布新的安装包"));
+        assert!(markdown.contains("- 结果：通过"));
+        assert!(markdown.contains("- repo://src/App.tsx"));
+        assert!(markdown.contains("## 限制与注意事项"));
+        assert!(markdown.contains("## 待确认问题"));
+    }
+
+    #[test]
+    fn handoff_markdown_uses_clear_empty_state_copy() {
+        let handoff = json!({
+            "package_id": "pkg.empty",
+            "source": {"title": "空交接"},
+            "project": {"display_name": "Relay"},
+            "session_state": {
+                "objective": "",
+                "summary": "",
+                "current_status": "",
+                "next_steps": [],
+                "tests": [],
+                "important_files": [],
+                "constraints": [],
+                "open_questions": []
+            }
+        });
+
+        let markdown = render_handoff_markdown(&handoff);
+        assert!(markdown.contains("没有记录明确的任务目标。"));
+        assert!(markdown.contains("当前会话没有记录明确的后续事项。"));
+        assert!(markdown.contains("当前会话没有记录已运行的检查命令。"));
+        assert!(markdown.contains("没有记录需要特别查看的文件。"));
+        assert!(!markdown.contains("No next steps were supplied."));
     }
 
     #[test]

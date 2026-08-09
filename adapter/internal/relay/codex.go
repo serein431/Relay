@@ -144,7 +144,9 @@ func codexRecord(parsed *ParsedSession, state *codexState, record map[string]any
 		updateTimeBounds(&state.created, &state.updated, stringValue(payload["timestamp"]))
 		parsed.Completeness.HiddenRecords++
 	case "turn_context":
-		state.cwd = firstString(state.cwd, payload["cwd"])
+		if cwd := stringValue(payload["cwd"]); cwd != "" {
+			state.cwd = cwd
+		}
 		state.currentTurnID = firstString(payload["turn_id"], state.currentTurnID)
 		parsed.Completeness.HiddenRecords++
 	case "response_item":

@@ -7,6 +7,7 @@ import {
   previewSession,
 } from "./lib/tauri";
 import { groupProjects } from "./lib/projects";
+import { buildSessionState } from "./lib/session-state";
 import { sessionKey, uniqueSessionDisplayTitles } from "./lib/sessions";
 import CloudShareActions from "./CloudShareActions";
 import ConversationViewer from "./ConversationViewer";
@@ -631,16 +632,19 @@ function App() {
         excluded_message_ids: excludedMessageIds,
         excluded_blocks: excludedBlocks,
         allow_sensitive_content: sensitiveAcknowledged,
-        session_state: {
-          objective: activeSession.title,
-          summary: activeSession.preview,
-          current_status: activeSession.preview,
-          next_steps: [],
-          tests: [],
-          important_files: [],
-          constraints: ["工具调用记录仅表示已经发生的操作，不得自动重新执行。"],
-          open_questions: [],
-        },
+        session_state: buildSessionState({
+          preview: contentPreview,
+          fallbackTitle: activeSession.title,
+          repository,
+          includeConversation: options.conversation,
+          includeToolEvidence: options.toolEvidence,
+          includeGit: options.gitState && Boolean(repository),
+          selectedStaged,
+          selectedUnstaged,
+          selectedUntracked,
+          excludedMessageIds,
+          excludedBlocks,
+        }),
       });
       setBackendSensitiveFindings([]);
       setPackResult(result);
