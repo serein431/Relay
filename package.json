@@ -1,0 +1,41 @@
+{
+  "name": "relay-session-share",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "scripts": {
+    "dev": "vite --host 127.0.0.1",
+    "build": "tsc --noEmit && vite build",
+    "test:frontend": "vitest run src",
+    "preview": "vite preview --host 127.0.0.1",
+    "adapter:build": "cd adapter && mkdir -p bin && go build -o bin/relay-agent-adapter ./cmd/relay-agent-adapter",
+    "adapter:build:sidecar": "bash scripts/build-adapter-sidecar.sh",
+    "adapter:check": "cd adapter && test -z \"$(gofmt -l .)\" && go test ./... && go vet ./...",
+    "schema:check": "node scripts/validate-schema.mjs",
+    "cloud:check": "cd cloud && WRANGLER_LOG_PATH=/tmp/relay-wrangler.log npm run check",
+    "desktop:check": "cd src-tauri && cargo fmt --all -- --check && cargo clippy --all-targets -- -D warnings && cargo test && cargo check --locked --all-targets",
+    "check": "pnpm build && pnpm test:frontend && pnpm schema:check && pnpm adapter:check && pnpm cloud:check && pnpm desktop:check",
+    "desktop:dev": "tauri dev",
+    "desktop:build": "tauri build",
+    "desktop:build:local": "tauri build --bundles app,dmg --no-sign",
+    "desktop:verify": "bash scripts/verify-macos-bundle.sh",
+    "tauri": "tauri"
+  },
+  "dependencies": {
+    "@tauri-apps/api": "2.11.1",
+    "react": "19.2.8",
+    "react-dom": "19.2.8"
+  },
+  "devDependencies": {
+    "@tauri-apps/cli": "2.11.4",
+    "@types/react": "^19.2.14",
+    "@types/react-dom": "^19.2.3",
+    "@vitejs/plugin-react": "6.0.5",
+    "ajv": "8.20.0",
+    "ajv-formats": "3.0.1",
+    "typescript": "7.0.2",
+    "vite": "8.2.1",
+    "vitest": "4.1.10"
+  },
+  "packageManager": "pnpm@11.13.0"
+}

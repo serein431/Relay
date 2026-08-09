@@ -1,0 +1,13 @@
+node_modules/
+.pnpm-store/
+dist/
+.vite/
+.DS_Store
+src-tauri/target/
+src-tauri/gen/schemas/
+adapter/bin/
+*.relaypack
+cloud/.dev.vars
+cloud/.wrangler/
+cloud/coverage/
+cloud/src/receiver-bundle.generated.ts

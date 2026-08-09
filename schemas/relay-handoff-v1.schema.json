@@ -1,0 +1,1467 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://relay.local/schemas/relay-handoff-v1.schema.json",
+  "title": "Relay Handoff v1",
+  "description": "Portable, share-safe handoff data for continuing a Claude Code or Codex session. Provider-internal data and private reasoning are not valid shareable classifications.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema",
+    "package_id",
+    "created_at",
+    "export",
+    "source",
+    "session_state",
+    "environment",
+    "project",
+    "conversation",
+    "assets",
+    "git",
+    "diagnostics"
+  ],
+  "properties": {
+    "schema": {
+      "const": "relay.handoff.v1"
+    },
+    "package_id": {
+      "$ref": "#/$defs/stableId"
+    },
+    "created_at": {
+      "$ref": "#/$defs/timestamp"
+    },
+    "export": {
+      "$ref": "#/$defs/exportMetadata"
+    },
+    "source": {
+      "$ref": "#/$defs/source"
+    },
+    "session_state": {
+      "$ref": "#/$defs/sessionState"
+    },
+    "environment": {
+      "$ref": "#/$defs/environment"
+    },
+    "project": {
+      "$ref": "#/$defs/project"
+    },
+    "conversation": {
+      "$ref": "#/$defs/conversation"
+    },
+    "assets": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/asset"
+      }
+    },
+    "git": {
+      "$ref": "#/$defs/gitState"
+    },
+    "diagnostics": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/diagnostic"
+      }
+    }
+  },
+  "$defs": {
+    "stableId": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 256,
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]*$"
+    },
+    "timestamp": {
+      "type": "string",
+      "format": "date-time",
+      "pattern": "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}(?:\\.\\d+)?(?:Z|[+-]\\d{2}:\\d{2})$"
+    },
+    "sha256": {
+      "type": "string",
+      "pattern": "^[a-f0-9]{64}$"
+    },
+    "commitId": {
+      "type": "string",
+      "pattern": "^[0-9a-fA-F]{40,64}$"
+    },
+    "repoUri": {
+      "type": "string",
+      "description": "A normalized repository-relative logical path. Absolute paths, backslashes, NUL bytes, and dot segments are invalid.",
+      "pattern": "^repo://(?:$|(?!(?:[^/]+/)*\\.{1,2}(?:/|$))(?:[^/\\\\\\u0000]+/)*[^/\\\\\\u0000]+)$"
+    },
+    "archivePath": {
+      "type": "string",
+      "description": "A normalized path inside the encrypted Relay archive.",
+      "pattern": "^(?!/)(?!(?:[^/]+/)*\\.{1,2}(?:/|$))(?:[^/\\\\\\u0000]+/)*[^/\\\\\\u0000]+$"
+    },
+    "shareableClassification": {
+      "type": "string",
+      "description": "Only user-visible or project-owned content may be exported. provider_internal and private_reasoning are intentionally absent and therefore invalid.",
+      "enum": [
+        "user_visible",
+        "project_owned"
+      ]
+    },
+    "mapping": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "status"
+      ],
+      "properties": {
+        "status": {
+          "type": "string",
+          "enum": [
+            "exact",
+            "normalized",
+            "lossy",
+            "unmapped"
+          ]
+        },
+        "source_type": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 256
+        },
+        "source_id": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 512
+        },
+        "notes": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        }
+      }
+    },
+    "completeness": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "status"
+      ],
+      "properties": {
+        "status": {
+          "type": "string",
+          "enum": [
+            "complete",
+            "partial",
+            "unknown"
+          ]
+        },
+        "known_fields": {
+          "type": "array",
+          "uniqueItems": true,
+          "items": {
+            "type": "string"
+          }
+        },
+        "missing_fields": {
+          "type": "array",
+          "uniqueItems": true,
+          "items": {
+            "type": "string"
+          }
+        },
+        "notes": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        }
+      }
+    },
+    "exportMetadata": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "mode",
+        "native_history_included",
+        "completeness",
+        "omissions"
+      ],
+      "properties": {
+        "mode": {
+          "type": "string",
+          "enum": [
+            "full",
+            "selected"
+          ]
+        },
+        "native_history_included": {
+          "description": "Relay Handoff v1 never packages an opaque native history for later injection into an agent history store.",
+          "const": false
+        },
+        "completeness": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "status",
+            "exported_records",
+            "omitted_records"
+          ],
+          "properties": {
+            "status": {
+              "type": "string",
+              "enum": [
+                "complete",
+                "partial",
+                "unknown"
+              ]
+            },
+            "source_records": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "exported_records": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "omitted_records": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "unknown_records": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "notes": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            }
+          }
+        },
+        "omissions": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "reason",
+              "count"
+            ],
+            "properties": {
+              "reason": {
+                "type": "string",
+                "enum": [
+                  "provider_internal",
+                  "private_reasoning",
+                  "redacted_by_user",
+                  "unsupported_by_adapter",
+                  "missing_source",
+                  "missing_asset",
+                  "git_excluded",
+                  "other"
+                ]
+              },
+              "count": {
+                "type": "integer",
+                "minimum": 0
+              },
+              "note": {
+                "type": "string"
+              }
+            }
+          }
+        }
+      }
+    },
+    "source": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "agent",
+        "session_id",
+        "read_only",
+        "adapter"
+      ],
+      "properties": {
+        "agent": {
+          "type": "string",
+          "enum": [
+            "claude_code",
+            "codex",
+            "unknown"
+          ]
+        },
+        "session_id": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 1024
+        },
+        "read_only": {
+          "const": true
+        },
+        "title": {
+          "type": "string"
+        },
+        "created_at": {
+          "$ref": "#/$defs/timestamp"
+        },
+        "updated_at": {
+          "$ref": "#/$defs/timestamp"
+        },
+        "native_version": {
+          "type": "string",
+          "maxLength": 256
+        },
+        "adapter": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "name",
+            "version"
+          ],
+          "properties": {
+            "name": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 256
+            },
+            "version": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 256
+            },
+            "mapping_status": {
+              "type": "string",
+              "enum": [
+                "exact",
+                "normalized",
+                "lossy",
+                "unsupported"
+              ]
+            }
+          }
+        }
+      }
+    },
+    "sessionState": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "summary",
+        "current_status",
+        "next_steps",
+        "tests",
+        "important_files"
+      ],
+      "properties": {
+        "objective": {
+          "type": "string"
+        },
+        "summary": {
+          "type": "string"
+        },
+        "current_status": {
+          "type": "string"
+        },
+        "next_steps": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "text",
+              "status"
+            ],
+            "properties": {
+              "text": {
+                "type": "string"
+              },
+              "status": {
+                "type": "string",
+                "enum": [
+                  "pending",
+                  "in_progress",
+                  "blocked",
+                  "done",
+                  "unknown"
+                ]
+              }
+            }
+          }
+        },
+        "tests": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "name",
+              "status"
+            ],
+            "properties": {
+              "name": {
+                "type": "string"
+              },
+              "command": {
+                "type": "string",
+                "description": "Historical text only. Receivers must not execute this command automatically."
+              },
+              "status": {
+                "type": "string",
+                "enum": [
+                  "passed",
+                  "failed",
+                  "not_run",
+                  "unknown"
+                ]
+              },
+              "note": {
+                "type": "string"
+              }
+            }
+          }
+        },
+        "important_files": {
+          "type": "array",
+          "uniqueItems": true,
+          "items": {
+            "$ref": "#/$defs/repoUri"
+          }
+        },
+        "constraints": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "open_questions": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        }
+      }
+    },
+    "environment": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "os",
+        "arch",
+        "tools"
+      ],
+      "properties": {
+        "os": {
+          "type": "string",
+          "enum": [
+            "macos",
+            "linux",
+            "windows",
+            "unknown"
+          ]
+        },
+        "os_version": {
+          "type": "string"
+        },
+        "arch": {
+          "type": "string",
+          "enum": [
+            "arm64",
+            "x86_64",
+            "unknown"
+          ]
+        },
+        "shell": {
+          "type": "string"
+        },
+        "locale": {
+          "type": "string"
+        },
+        "timezone": {
+          "type": "string"
+        },
+        "tools": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "name"
+            ],
+            "properties": {
+              "name": {
+                "type": "string",
+                "minLength": 1
+              },
+              "version": {
+                "type": "string"
+              }
+            }
+          }
+        },
+        "notes": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        }
+      }
+    },
+    "project": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "project_id",
+        "display_name",
+        "logical_root",
+        "workspace"
+      ],
+      "properties": {
+        "project_id": {
+          "$ref": "#/$defs/stableId"
+        },
+        "display_name": {
+          "type": "string",
+          "minLength": 1
+        },
+        "logical_root": {
+          "const": "repo://"
+        },
+        "repository_identity": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "canonical_remote": {
+              "type": "string",
+              "description": "A credential-free remote URL. User info, query strings, and fragments must be removed before export."
+            },
+            "remote_fingerprint": {
+              "$ref": "#/$defs/sha256"
+            }
+          }
+        },
+        "workspace": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "kind"
+          ],
+          "properties": {
+            "kind": {
+              "type": "string",
+              "enum": [
+                "primary",
+                "worktree",
+                "unknown"
+              ]
+            },
+            "display_name": {
+              "type": "string"
+            },
+            "branch": {
+              "type": "string"
+            },
+            "head": {
+              "$ref": "#/$defs/commitId"
+            },
+            "detached": {
+              "type": "boolean"
+            }
+          }
+        }
+      }
+    },
+    "conversation": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "completeness",
+        "records"
+      ],
+      "properties": {
+        "active_branch_id": {
+          "$ref": "#/$defs/stableId"
+        },
+        "root_record_ids": {
+          "type": "array",
+          "uniqueItems": true,
+          "items": {
+            "$ref": "#/$defs/stableId"
+          }
+        },
+        "completeness": {
+          "$ref": "#/$defs/completeness"
+        },
+        "records": {
+          "type": "array",
+          "items": {
+            "oneOf": [
+              {
+                "$ref": "#/$defs/messageRecord"
+              },
+              {
+                "$ref": "#/$defs/unknownRecord"
+              }
+            ]
+          }
+        }
+      }
+    },
+    "recordCommon": {
+      "type": "object",
+      "required": [
+        "id",
+        "kind",
+        "classification",
+        "mapping",
+        "completeness"
+      ],
+      "properties": {
+        "id": {
+          "$ref": "#/$defs/stableId"
+        },
+        "kind": {
+          "type": "string"
+        },
+        "classification": {
+          "$ref": "#/$defs/shareableClassification"
+        },
+        "turn_id": {
+          "$ref": "#/$defs/stableId"
+        },
+        "branch_id": {
+          "$ref": "#/$defs/stableId"
+        },
+        "parent_id": {
+          "oneOf": [
+            {
+              "$ref": "#/$defs/stableId"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "timestamp": {
+          "$ref": "#/$defs/timestamp"
+        },
+        "mapping": {
+          "$ref": "#/$defs/mapping"
+        },
+        "completeness": {
+          "$ref": "#/$defs/completeness"
+        }
+      }
+    },
+    "messageRecord": {
+      "allOf": [
+        {
+          "$ref": "#/$defs/recordCommon"
+        },
+        {
+          "type": "object",
+          "required": [
+            "role",
+            "blocks"
+          ],
+          "properties": {
+            "kind": {
+              "const": "message"
+            },
+            "role": {
+              "type": "string",
+              "enum": [
+                "user",
+                "assistant",
+                "developer",
+                "system",
+                "tool",
+                "unknown"
+              ]
+            },
+            "blocks": {
+              "type": "array",
+              "items": {
+                "$ref": "#/$defs/contentBlock"
+              }
+            }
+          }
+        }
+      ],
+      "unevaluatedProperties": false
+    },
+    "unknownRecord": {
+      "allOf": [
+        {
+          "$ref": "#/$defs/recordCommon"
+        },
+        {
+          "type": "object",
+          "required": [
+            "original_type",
+            "safe_summary",
+            "preservation"
+          ],
+          "properties": {
+            "kind": {
+              "const": "unknown"
+            },
+            "original_type": {
+              "type": "string",
+              "minLength": 1
+            },
+            "safe_summary": {
+              "type": "string"
+            },
+            "mapping": {
+              "allOf": [
+                {
+                  "$ref": "#/$defs/mapping"
+                },
+                {
+                  "type": "object",
+                  "properties": {
+                    "status": {
+                      "type": "string",
+                      "enum": [
+                        "lossy",
+                        "unmapped"
+                      ]
+                    }
+                  }
+                }
+              ]
+            },
+            "completeness": {
+              "allOf": [
+                {
+                  "$ref": "#/$defs/completeness"
+                },
+                {
+                  "type": "object",
+                  "properties": {
+                    "status": {
+                      "type": "string",
+                      "enum": [
+                        "partial",
+                        "unknown"
+                      ]
+                    }
+                  }
+                }
+              ]
+            },
+            "sanitized_payload": {
+              "description": "Optional adapter-sanitized data. Raw provider records must not be copied here without classification and redaction.",
+              "type": [
+                "object",
+                "array",
+                "string",
+                "number",
+                "boolean",
+                "null"
+              ]
+            },
+            "preservation": {
+              "const": "historical_record_only"
+            }
+          }
+        }
+      ],
+      "unevaluatedProperties": false
+    },
+    "blockCommon": {
+      "type": "object",
+      "required": [
+        "id",
+        "kind",
+        "classification",
+        "mapping"
+      ],
+      "properties": {
+        "id": {
+          "$ref": "#/$defs/stableId"
+        },
+        "kind": {
+          "type": "string"
+        },
+        "classification": {
+          "$ref": "#/$defs/shareableClassification"
+        },
+        "mapping": {
+          "$ref": "#/$defs/mapping"
+        }
+      }
+    },
+    "contentBlock": {
+      "oneOf": [
+        {
+          "$ref": "#/$defs/textBlock"
+        },
+        {
+          "$ref": "#/$defs/toolCallBlock"
+        },
+        {
+          "$ref": "#/$defs/toolResultBlock"
+        },
+        {
+          "$ref": "#/$defs/assetRefBlock"
+        },
+        {
+          "$ref": "#/$defs/sourceContextBlock"
+        },
+        {
+          "$ref": "#/$defs/unsupportedBlock"
+        }
+      ]
+    },
+    "textBlock": {
+      "allOf": [
+        {
+          "$ref": "#/$defs/blockCommon"
+        },
+        {
+          "type": "object",
+          "required": [
+            "text"
+          ],
+          "properties": {
+            "kind": {
+              "const": "text"
+            },
+            "text": {
+              "type": "string"
+            },
+            "format": {
+              "type": "string",
+              "enum": [
+                "plain",
+                "markdown",
+                "json",
+                "other"
+              ]
+            }
+          }
+        }
+      ],
+      "unevaluatedProperties": false
+    },
+    "toolCallBlock": {
+      "allOf": [
+        {
+          "$ref": "#/$defs/blockCommon"
+        },
+        {
+          "type": "object",
+          "required": [
+            "call_id",
+            "tool_name",
+            "arguments",
+            "status",
+            "semantics",
+            "replay_policy"
+          ],
+          "properties": {
+            "kind": {
+              "const": "tool_call"
+            },
+            "call_id": {
+              "$ref": "#/$defs/stableId"
+            },
+            "tool_name": {
+              "type": "string",
+              "minLength": 1
+            },
+            "arguments": {
+              "description": "Historical, share-safe arguments. Receivers must not pass them to a tool automatically.",
+              "type": [
+                "object",
+                "array",
+                "string",
+                "number",
+                "boolean",
+                "null"
+              ]
+            },
+            "status": {
+              "type": "string",
+              "enum": [
+                "observed",
+                "completed",
+                "failed",
+                "cancelled",
+                "unknown"
+              ]
+            },
+            "semantics": {
+              "const": "historical_record"
+            },
+            "replay_policy": {
+              "const": "never"
+            }
+          }
+        }
+      ],
+      "unevaluatedProperties": false
+    },
+    "toolResultBlock": {
+      "allOf": [
+        {
+          "$ref": "#/$defs/blockCommon"
+        },
+        {
+          "type": "object",
+          "required": [
+            "call_id",
+            "status",
+            "content",
+            "semantics",
+            "replay_policy"
+          ],
+          "properties": {
+            "kind": {
+              "const": "tool_result"
+            },
+            "call_id": {
+              "$ref": "#/$defs/stableId"
+            },
+            "status": {
+              "type": "string",
+              "enum": [
+                "success",
+                "error",
+                "cancelled",
+                "unknown"
+              ]
+            },
+            "content": {
+              "type": "array",
+              "items": {
+                "oneOf": [
+                  {
+                    "$ref": "#/$defs/textBlock"
+                  },
+                  {
+                    "$ref": "#/$defs/assetRefBlock"
+                  },
+                  {
+                    "$ref": "#/$defs/unsupportedBlock"
+                  }
+                ]
+              }
+            },
+            "semantics": {
+              "const": "historical_record"
+            },
+            "replay_policy": {
+              "const": "never"
+            }
+          }
+        }
+      ],
+      "unevaluatedProperties": false
+    },
+    "assetRefBlock": {
+      "allOf": [
+        {
+          "$ref": "#/$defs/blockCommon"
+        },
+        {
+          "type": "object",
+          "required": [
+            "asset_id"
+          ],
+          "properties": {
+            "kind": {
+              "const": "asset_ref"
+            },
+            "asset_id": {
+              "$ref": "#/$defs/stableId"
+            },
+            "caption": {
+              "type": "string"
+            }
+          }
+        }
+      ],
+      "unevaluatedProperties": false
+    },
+    "sourceContextBlock": {
+      "allOf": [
+        {
+          "$ref": "#/$defs/blockCommon"
+        },
+        {
+          "type": "object",
+          "required": [
+            "source_kind"
+          ],
+          "properties": {
+            "kind": {
+              "const": "source_context"
+            },
+            "source_kind": {
+              "type": "string",
+              "enum": [
+                "repository_file",
+                "project_instruction",
+                "session_attachment",
+                "other"
+              ]
+            },
+            "logical_path": {
+              "$ref": "#/$defs/repoUri"
+            },
+            "line_range": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": [
+                "start"
+              ],
+              "properties": {
+                "start": {
+                  "type": "integer",
+                  "minimum": 1
+                },
+                "end": {
+                  "type": "integer",
+                  "minimum": 1
+                }
+              }
+            },
+            "text": {
+              "type": "string"
+            },
+            "asset_id": {
+              "$ref": "#/$defs/stableId"
+            }
+          }
+        }
+      ],
+      "unevaluatedProperties": false
+    },
+    "unsupportedBlock": {
+      "allOf": [
+        {
+          "$ref": "#/$defs/blockCommon"
+        },
+        {
+          "type": "object",
+          "required": [
+            "original_type",
+            "safe_summary",
+            "preservation"
+          ],
+          "properties": {
+            "kind": {
+              "const": "unsupported"
+            },
+            "original_type": {
+              "type": "string",
+              "minLength": 1
+            },
+            "safe_summary": {
+              "type": "string"
+            },
+            "mapping": {
+              "allOf": [
+                {
+                  "$ref": "#/$defs/mapping"
+                },
+                {
+                  "type": "object",
+                  "properties": {
+                    "status": {
+                      "type": "string",
+                      "enum": [
+                        "lossy",
+                        "unmapped"
+                      ]
+                    }
+                  }
+                }
+              ]
+            },
+            "sanitized_payload": {
+              "description": "Optional adapter-sanitized data. It must not contain provider-internal data or private reasoning.",
+              "type": [
+                "object",
+                "array",
+                "string",
+                "number",
+                "boolean",
+                "null"
+              ]
+            },
+            "preservation": {
+              "const": "historical_record_only"
+            }
+          }
+        }
+      ],
+      "unevaluatedProperties": false
+    },
+    "asset": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "id",
+        "kind",
+        "classification",
+        "status",
+        "execution_policy"
+      ],
+      "properties": {
+        "id": {
+          "$ref": "#/$defs/stableId"
+        },
+        "kind": {
+          "type": "string",
+          "enum": [
+            "conversation_attachment",
+            "tool_output",
+            "source_snapshot",
+            "git_bundle",
+            "git_patch",
+            "untracked_file",
+            "handoff_document",
+            "other"
+          ]
+        },
+        "classification": {
+          "$ref": "#/$defs/shareableClassification"
+        },
+        "status": {
+          "type": "string",
+          "enum": [
+            "included",
+            "omitted",
+            "missing"
+          ]
+        },
+        "archive_path": {
+          "$ref": "#/$defs/archivePath"
+        },
+        "logical_path": {
+          "$ref": "#/$defs/repoUri"
+        },
+        "media_type": {
+          "type": "string"
+        },
+        "filename": {
+          "type": "string"
+        },
+        "byte_length": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "sha256": {
+          "$ref": "#/$defs/sha256"
+        },
+        "execution_policy": {
+          "const": "never"
+        },
+        "note": {
+          "type": "string"
+        }
+      },
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "status": {
+                "const": "included"
+              }
+            }
+          },
+          "then": {
+            "required": [
+              "archive_path",
+              "byte_length",
+              "sha256"
+            ]
+          }
+        }
+      ]
+    },
+    "captureItem": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "status"
+      ],
+      "properties": {
+        "status": {
+          "type": "string",
+          "enum": [
+            "included",
+            "none",
+            "omitted",
+            "blocked",
+            "unknown"
+          ]
+        },
+        "asset_id": {
+          "$ref": "#/$defs/stableId"
+        },
+        "note": {
+          "type": "string"
+        }
+      }
+    },
+    "localCommitsCapture": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "status"
+      ],
+      "properties": {
+        "status": {
+          "type": "string",
+          "enum": [
+            "included",
+            "none",
+            "omitted",
+            "blocked",
+            "unknown"
+          ]
+        },
+        "asset_id": {
+          "$ref": "#/$defs/stableId"
+        },
+        "base": {
+          "$ref": "#/$defs/commitId"
+        },
+        "tips": {
+          "type": "array",
+          "uniqueItems": true,
+          "items": {
+            "$ref": "#/$defs/commitId"
+          }
+        },
+        "note": {
+          "type": "string"
+        }
+      }
+    },
+    "gitState": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "included",
+        "capture",
+        "completeness"
+      ],
+      "properties": {
+        "included": {
+          "type": "boolean"
+        },
+        "repository": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "object_format": {
+              "type": "string",
+              "enum": [
+                "sha1",
+                "sha256",
+                "unknown"
+              ]
+            },
+            "head": {
+              "$ref": "#/$defs/commitId"
+            },
+            "base": {
+              "$ref": "#/$defs/commitId"
+            },
+            "branch": {
+              "type": "string"
+            },
+            "upstream": {
+              "type": "string"
+            },
+            "canonical_remote": {
+              "type": "string",
+              "description": "A credential-free remote URL."
+            },
+            "remote_fingerprint": {
+              "$ref": "#/$defs/sha256"
+            }
+          }
+        },
+        "capture": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "local_commits",
+            "staged_patch",
+            "unstaged_patch",
+            "untracked_files",
+            "ignored_files"
+          ],
+          "properties": {
+            "local_commits": {
+              "$ref": "#/$defs/localCommitsCapture"
+            },
+            "staged_patch": {
+              "$ref": "#/$defs/captureItem"
+            },
+            "unstaged_patch": {
+              "$ref": "#/$defs/captureItem"
+            },
+            "untracked_files": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "additionalProperties": false,
+                "required": [
+                  "logical_path",
+                  "asset_id",
+                  "mode"
+                ],
+                "properties": {
+                  "logical_path": {
+                    "$ref": "#/$defs/repoUri"
+                  },
+                  "asset_id": {
+                    "$ref": "#/$defs/stableId"
+                  },
+                  "mode": {
+                    "type": "string",
+                    "pattern": "^[0-7]{6}$"
+                  }
+                }
+              }
+            },
+            "ignored_files": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": [
+                "status"
+              ],
+              "properties": {
+                "status": {
+                  "const": "excluded"
+                },
+                "count": {
+                  "type": "integer",
+                  "minimum": 0
+                },
+                "note": {
+                  "type": "string"
+                }
+              }
+            },
+            "submodules": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": [
+                "status"
+              ],
+              "properties": {
+                "status": {
+                  "type": "string",
+                  "enum": [
+                    "not_present",
+                    "clean",
+                    "dirty",
+                    "blocked",
+                    "unknown"
+                  ]
+                },
+                "paths": {
+                  "type": "array",
+                  "uniqueItems": true,
+                  "items": {
+                    "$ref": "#/$defs/repoUri"
+                  }
+                }
+              }
+            },
+            "lfs": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": [
+                "status"
+              ],
+              "properties": {
+                "status": {
+                  "type": "string",
+                  "enum": [
+                    "not_present",
+                    "resolved",
+                    "pointers_only",
+                    "missing_objects",
+                    "blocked",
+                    "unknown"
+                  ]
+                },
+                "objects_included": {
+                  "type": "boolean"
+                }
+              }
+            }
+          }
+        },
+        "completeness": {
+          "$ref": "#/$defs/completeness"
+        }
+      }
+    },
+    "diagnostic": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "code",
+        "severity",
+        "scope",
+        "message"
+      ],
+      "properties": {
+        "code": {
+          "type": "string",
+          "pattern": "^[A-Z][A-Z0-9_]*$"
+        },
+        "severity": {
+          "type": "string",
+          "enum": [
+            "info",
+            "warning",
+            "error",
+            "blocking"
+          ]
+        },
+        "scope": {
+          "type": "string",
+          "enum": [
+            "source",
+            "conversation",
+            "asset",
+            "git",
+            "security",
+            "import",
+            "other"
+          ]
+        },
+        "record_id": {
+          "$ref": "#/$defs/stableId"
+        },
+        "asset_id": {
+          "$ref": "#/$defs/stableId"
+        },
+        "path": {
+          "$ref": "#/$defs/repoUri"
+        },
+        "message": {
+          "type": "string"
+        },
+        "details": {
+          "type": [
+            "object",
+            "array",
+            "string",
+            "number",
+            "boolean",
+            "null"
+          ]
+        }
+      }
+    }
+  }
+}

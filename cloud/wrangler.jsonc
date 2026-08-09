@@ -1,0 +1,43 @@
+{
+  "$schema": "./node_modules/wrangler/config-schema.json",
+  "name": "relay-share",
+  "main": "src/index.ts",
+  "compatibility_date": "2026-08-07",
+  "workers_dev": true,
+  "observability": {
+    "enabled": false
+  },
+  "vars": {
+    "PUBLIC_BASE_URL": "https://share.example.com",
+    "ALLOWED_ORIGINS": "tauri://localhost,http://tauri.localhost",
+    "MAX_CIPHERTEXT_BYTES": "33554432",
+    "DEFAULT_TTL_SECONDS": "604800",
+    "UPLOAD_EXPIRY_SECONDS": "900",
+    "MIN_TTL_SECONDS": "60",
+    "MAX_TTL_SECONDS": "2592000"
+  },
+  "r2_buckets": [
+    {
+      "binding": "RELAY_BLOBS",
+      "bucket_name": "relay-share-blobs"
+    }
+  ],
+  "durable_objects": {
+    "bindings": [
+      {
+        "name": "RELAY_SHARES",
+        "class_name": "RelayShare"
+      },
+      {
+        "name": "RELAY_RATE_LIMITS",
+        "class_name": "RelayRateLimit"
+      }
+    ]
+  },
+  "migrations": [
+    {
+      "tag": "v1",
+      "new_sqlite_classes": ["RelayShare", "RelayRateLimit"]
+    }
+  ]
+}

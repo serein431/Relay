@@ -1,0 +1,30 @@
+{
+  "name": "relay-share-cloud",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "build:receiver": "node scripts/build-receiver.mjs",
+    "build": "npm run build:receiver && wrangler deploy --dry-run --outdir dist",
+    "dev": "npm run build:receiver && wrangler dev",
+    "deploy": "npm run build:receiver && wrangler deploy",
+    "test": "npm run build && vitest run",
+    "typecheck": "npm run build:receiver && tsc --noEmit",
+    "check": "npm run typecheck && npm test"
+  },
+  "devDependencies": {
+    "@cloudflare/workers-types": "5.20260804.1",
+    "@types/node": "26.1.2",
+    "esbuild": "^0.28.2",
+    "miniflare": "5.20260801.1-alpha",
+    "typescript": "7.0.2",
+    "vitest": "4.1.10",
+    "wrangler": "4.120.0"
+  },
+  "engines": {
+    "node": ">=20.0.0"
+  },
+  "dependencies": {
+    "fzstd": "^0.1.1"
+  }
+}

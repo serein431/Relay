@@ -1,0 +1,239 @@
+{
+  "schema": "relay.handoff.v1",
+  "package_id": "pkg.demo.001",
+  "created_at": "2026-08-07T08:00:00Z",
+  "export": {
+    "mode": "selected",
+    "native_history_included": false,
+    "completeness": {
+      "status": "partial",
+      "source_records": 3,
+      "exported_records": 2,
+      "omitted_records": 1,
+      "unknown_records": 1,
+      "notes": [
+        "One provider-specific event was kept as an unknown record."
+      ]
+    },
+    "omissions": [
+      {
+        "reason": "private_reasoning",
+        "count": 1,
+        "note": "Private model reasoning is never shareable."
+      }
+    ]
+  },
+  "source": {
+    "agent": "codex",
+    "session_id": "demo-session-001",
+    "read_only": true,
+    "title": "Add repository inspection",
+    "created_at": "2026-08-07T07:00:00Z",
+    "updated_at": "2026-08-07T07:45:00Z",
+    "native_version": "0.142.5",
+    "adapter": {
+      "name": "relay-adapter",
+      "version": "0.1.0",
+      "mapping_status": "normalized"
+    }
+  },
+  "session_state": {
+    "objective": "Inspect a Git repository before creating a handoff package.",
+    "summary": "Repository discovery is implemented; package creation is pending.",
+    "current_status": "The repository root and worktree state can be read without changing files.",
+    "next_steps": [
+      {
+        "text": "Create a package preview.",
+        "status": "pending"
+      }
+    ],
+    "tests": [
+      {
+        "name": "Rust unit tests",
+        "command": "cargo test",
+        "status": "passed"
+      }
+    ],
+    "important_files": [
+      "repo://src-tauri/src/lib.rs"
+    ],
+    "constraints": [
+      "Do not modify the sender's worktree."
+    ],
+    "open_questions": []
+  },
+  "environment": {
+    "os": "macos",
+    "os_version": "15",
+    "arch": "arm64",
+    "shell": "zsh",
+    "locale": "zh_CN.UTF-8",
+    "timezone": "Asia/Shanghai",
+    "tools": [
+      {
+        "name": "git",
+        "version": "2.50.1"
+      },
+      {
+        "name": "codex",
+        "version": "0.142.5"
+      }
+    ]
+  },
+  "project": {
+    "project_id": "project.demo",
+    "display_name": "Session Share",
+    "logical_root": "repo://",
+    "workspace": {
+      "kind": "primary",
+      "display_name": "main",
+      "branch": "main",
+      "head": "0123456789abcdef0123456789abcdef01234567",
+      "detached": false
+    }
+  },
+  "conversation": {
+    "active_branch_id": "branch.main",
+    "root_record_ids": [
+      "message.001"
+    ],
+    "completeness": {
+      "status": "partial",
+      "missing_fields": [
+        "provider_specific_event"
+      ]
+    },
+    "records": [
+      {
+        "id": "message.001",
+        "kind": "message",
+        "classification": "user_visible",
+        "turn_id": "turn.001",
+        "branch_id": "branch.main",
+        "parent_id": null,
+        "timestamp": "2026-08-07T07:10:00Z",
+        "mapping": {
+          "status": "exact",
+          "source_type": "response_item"
+        },
+        "completeness": {
+          "status": "complete"
+        },
+        "role": "assistant",
+        "blocks": [
+          {
+            "id": "block.text.001",
+            "kind": "text",
+            "classification": "user_visible",
+            "mapping": {
+              "status": "exact"
+            },
+            "text": "I will inspect the repository state.",
+            "format": "plain"
+          },
+          {
+            "id": "block.call.001",
+            "kind": "tool_call",
+            "classification": "user_visible",
+            "mapping": {
+              "status": "normalized",
+              "source_type": "function_call"
+            },
+            "call_id": "call.001",
+            "tool_name": "inspect_repository",
+            "arguments": {
+              "path": "repo://"
+            },
+            "status": "completed",
+            "semantics": "historical_record",
+            "replay_policy": "never"
+          },
+          {
+            "id": "block.result.001",
+            "kind": "tool_result",
+            "classification": "user_visible",
+            "mapping": {
+              "status": "normalized",
+              "source_type": "function_call_output"
+            },
+            "call_id": "call.001",
+            "status": "success",
+            "content": [
+              {
+                "id": "block.result.text.001",
+                "kind": "text",
+                "classification": "user_visible",
+                "mapping": {
+                  "status": "exact"
+                },
+                "text": "Repository is on main with one unstaged file.",
+                "format": "plain"
+              }
+            ],
+            "semantics": "historical_record",
+            "replay_policy": "never"
+          }
+        ]
+      },
+      {
+        "id": "unknown.001",
+        "kind": "unknown",
+        "classification": "user_visible",
+        "turn_id": "turn.001",
+        "branch_id": "branch.main",
+        "parent_id": "message.001",
+        "mapping": {
+          "status": "unmapped",
+          "source_type": "future_event"
+        },
+        "completeness": {
+          "status": "unknown"
+        },
+        "original_type": "future_event",
+        "safe_summary": "An unsupported user-visible event was present.",
+        "preservation": "historical_record_only"
+      }
+    ]
+  },
+  "assets": [],
+  "git": {
+    "included": false,
+    "capture": {
+      "local_commits": {
+        "status": "omitted",
+        "note": "Git content was not selected for this example."
+      },
+      "staged_patch": {
+        "status": "omitted"
+      },
+      "unstaged_patch": {
+        "status": "omitted"
+      },
+      "untracked_files": [],
+      "ignored_files": {
+        "status": "excluded"
+      },
+      "submodules": {
+        "status": "not_present"
+      },
+      "lfs": {
+        "status": "not_present",
+        "objects_included": false
+      }
+    },
+    "completeness": {
+      "status": "complete",
+      "notes": [
+        "Git content was intentionally omitted."
+      ]
+    }
+  },
+  "diagnostics": [
+    {
+      "code": "PARTIAL_EXPORT",
+      "severity": "warning",
+      "scope": "conversation",
+      "message": "The handoff contains an unsupported historical record."
+    }
+  ]
+}

@@ -1,0 +1,7 @@
+{"id":"legacy-session-1","timestamp":"2026-08-06T02:00:00Z","instructions":"CODEX_LEGACY_INSTRUCTIONS","model_provider":"default","model":"gpt-5"}
+{"record_type":"state","secret":"CODEX_LEGACY_STATE_SECRET"}
+{"type":"message","id":"legacy-env","role":"user","content":[{"type":"input_text","text":"<environment_context>\n<cwd>/tmp/legacy-relay</cwd>\n</environment_context>"}]}
+{"type":"message","id":"legacy-user","role":"user","content":[{"type":"input_text","text":"Fix the legacy adapter"}]}
+{"type":"message","id":"legacy-assistant","role":"assistant","content":[{"type":"output_text","text":"I will run a command."}]}
+{"type":"function_call","id":"legacy-call-record","call_id":"legacy-call-1","name":"shell","arguments":"{\"command\":\"go test ./...\"}"}
+{"type":"function_call_output","id":"legacy-result-record","call_id":"legacy-call-1","output":"PASS"}
