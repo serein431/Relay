@@ -118,7 +118,7 @@ describe("loadWorkspaceSnapshot", () => {
     expect(result.issues).toContainEqual(expect.objectContaining({
       code: "session_too_large",
       severity: "warning",
-      message: expect.stringContaining("超过 256 MB"),
+      message: expect.stringContaining("超过 1 GB"),
     }));
     expect(result.issues[0].message).not.toContain("configured safety limit");
   });

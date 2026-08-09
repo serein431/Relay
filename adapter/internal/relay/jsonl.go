@@ -13,10 +13,10 @@ const (
 	// MaxSessionFileBytes bounds the amount of untrusted provider history that
 	// one parse may consume. The adapter is a preview/export helper, not an
 	// archival reader for arbitrarily large files.
-	MaxSessionFileBytes int64 = 256 * 1024 * 1024
+	MaxSessionFileBytes int64 = 1024 * 1024 * 1024
 	// MaxSessionLineBytes permits large tool results while preventing one JSONL
 	// record from forcing an unbounded allocation.
-	MaxSessionLineBytes = 16 * 1024 * 1024
+	MaxSessionLineBytes = 32 * 1024 * 1024
 	// MaxJSONDepth is intentionally aligned with the desktop-side sanitizer.
 	MaxJSONDepth = 64
 )

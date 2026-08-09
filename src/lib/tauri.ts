@@ -190,7 +190,7 @@ function discoveryIssues(value: unknown): WorkspaceLoadIssue[] {
     if (!isRecord(warning)) return [];
     const code = asString(warning.code) ?? "session_scan_warning";
     const message = code === "session_too_large"
-      ? "有一条会话文件超过 256 MB。Relay 为避免占用过多内存没有显示它，其他会话不受影响。"
+      ? "有一条会话文件超过 1 GB。Relay 为避免占用过多内存没有显示它，其他会话不受影响。"
       : asString(warning.message) ?? "部分本机会话没有成功读取。";
     return [{
       stage: "discover_sessions" as const,

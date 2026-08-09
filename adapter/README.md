@@ -139,8 +139,9 @@ go build -o bin/relay-agent-adapter ./cmd/relay-agent-adapter
 
 原生会话文件是不受信任的输入。当前固定上限如下：
 
-- 单个会话文件最多 256 MiB。超过后返回 `session_too_large`。
-- 单条 JSONL 记录最多 16 MiB。超过后跳过该行、返回 `line_too_large`，并继续读取下一行。
+- 单个会话文件最多 1 GiB。超过后返回 `session_too_large`。
+- 单条 JSONL 记录最多 32 MiB。超过后跳过该行、返回 `line_too_large`，并继续读取下一行。
+- 工具返回中的内嵌图片、音频和超过 1 MiB 的单个字符串不会原样保留。适配程序会改写成固定的省略说明和原始字节数，继续保留工具名称、调用关系及其他可读字段。
 - JSON 最多嵌套 64 层。超过后跳过该行并返回 `json_too_deep`；Codex 工具调用中以字符串保存的 JSON 参数也会单独检查，超过后用固定省略说明替换并返回 `embedded_json_too_deep`。
 - 文件末尾没有换行的残缺记录不会尝试导出，返回 `truncated_final_line`。
 

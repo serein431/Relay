@@ -20,6 +20,8 @@ var (
 	sensitiveType = regexp.MustCompile(`(?i)^(?:sk-|ghp_|github_pat_|bearer|token|secret|password|api[_-]?key|access[_-]?token|refresh[_-]?token|session[_-]?token|authorization)`)
 )
 
+const maxPreservedPayloadStringBytes = 1024 * 1024
+
 func stringValue(v any) string {
 	s, _ := v.(string)
 	return strings.TrimSpace(s)
@@ -342,14 +344,21 @@ func sanitizedValueAt(v any, depth int) any {
 	switch value := v.(type) {
 	case map[string]any:
 		out := make(map[string]any, len(value))
-		isBase64 := strings.EqualFold(stringValue(value["type"]), "base64")
+		valueType := strings.ToLower(stringValue(value["type"]))
+		isBase64 := valueType == "base64"
+		isEmbeddedMedia := isBase64 || valueType == "image" || valueType == "audio" || valueType == "input_image" || valueType == "input_audio"
 		for key, child := range value {
 			switch strings.ToLower(key) {
 			case "encrypted_content", "encryptedcontent", "internal_chat_message_metadata_passthrough", "reasoning_content", "thinking":
 				continue
 			case "data":
-				if isBase64 {
-					out["data_omitted"] = true
+				if isEmbeddedMedia {
+					out["data_omitted"] = omittedPayloadValue("embedded_media", valueBytes(child))
+					continue
+				}
+			case "image_url", "audio_url":
+				if text, ok := child.(string); ok && isDataURL(text) {
+					out[key+"_omitted"] = omittedPayloadValue("embedded_media", len([]byte(text)))
 					continue
 				}
 			}
@@ -362,8 +371,36 @@ func sanitizedValueAt(v any, depth int) any {
 			out = append(out, sanitizedValueAt(child, depth+1))
 		}
 		return out
+	case string:
+		if len([]byte(value)) > maxPreservedPayloadStringBytes {
+			return omittedPayloadValue("value_too_large", len([]byte(value)))
+		}
+		return value
 	default:
 		return value
+	}
+}
+
+func isDataURL(value string) bool {
+	return strings.HasPrefix(strings.ToLower(strings.TrimSpace(value)), "data:")
+}
+
+func valueBytes(value any) int {
+	switch typed := value.(type) {
+	case string:
+		return len([]byte(typed))
+	case []byte:
+		return len(typed)
+	default:
+		return 0
+	}
+}
+
+func omittedPayloadValue(reason string, bytes int) map[string]any {
+	return map[string]any{
+		"omitted": true,
+		"reason":  reason,
+		"bytes":   bytes,
 	}
 }
 

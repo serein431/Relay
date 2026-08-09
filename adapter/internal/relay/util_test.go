@@ -1,11 +1,36 @@
 package relay
 
 import (
+	"encoding/json"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
 )
+
+func TestSanitizedValueOmitsEmbeddedMediaAndLargePayloadStrings(t *testing.T) {
+	media := "data:image/png;base64," + strings.Repeat("A", 2*1024*1024)
+	value := sanitizedValue([]any{
+		map[string]any{"type": "image", "image_url": media, "detail": "original"},
+		map[string]any{"type": "audio", "data": strings.Repeat("B", 2048)},
+		strings.Repeat("C", maxPreservedPayloadStringBytes+1),
+	})
+	encoded, err := json.Marshal(value)
+	if err != nil {
+		t.Fatal(err)
+	}
+	text := string(encoded)
+	for _, secret := range []string{media, strings.Repeat("B", 2048), strings.Repeat("C", 1024)} {
+		if strings.Contains(text, secret) {
+			t.Fatal("sanitized value retained an embedded or oversized payload")
+		}
+	}
+	for _, marker := range []string{"image_url_omitted", "data_omitted", "embedded_media", "value_too_large"} {
+		if !strings.Contains(text, marker) {
+			t.Fatalf("sanitized value is missing %q: %s", marker, text)
+		}
+	}
+}
 
 func TestProjectIdentityGroupsNestedPathsInOneRepository(t *testing.T) {
 	repository := t.TempDir()
