@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
+import { copyText } from "./lib/clipboard";
 import {
   exportRelaypack,
   inspectRepository,
@@ -682,8 +683,12 @@ function App() {
 
   const copyKey = async () => {
     if (!packResult) return;
-    await navigator.clipboard.writeText(packResult.key_fragment);
-    showNotice("解密密钥已复制。请通过另一个渠道发送，不要和 .relaypack 放在同一条消息里。", "warning");
+    try {
+      await copyText(packResult.key_fragment);
+      showNotice("解密密钥已复制。请通过另一个渠道发送，不要和 .relaypack 放在同一条消息里。", "warning");
+    } catch {
+      showNotice("复制失败，请手动选择解密密钥复制。", "error");
+    }
   };
 
   if (!snapshot) {

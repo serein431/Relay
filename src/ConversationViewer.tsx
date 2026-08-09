@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
+import { copyText } from "./lib/clipboard";
 import type {
   AdapterPreviewBlock,
   AdapterPreviewMessage,
@@ -245,7 +246,7 @@ export default function ConversationViewer({
 
   const copyMessage = async (message: AdapterPreviewMessage) => {
     try {
-      await navigator.clipboard.writeText(messageCopyText(message));
+      await copyText(messageCopyText(message));
       setCopiedMessageId(message.id);
       window.setTimeout(() => setCopiedMessageId(null), 1_800);
       onNotice?.("消息内容已复制。");

@@ -3,5 +3,5 @@
   "identifier": "default",
   "description": "Default permissions for Relay's main window",
   "windows": ["main"],
-  "permissions": ["core:default"]
+  "permissions": ["core:default", "clipboard-manager:allow-write-text"]
 }

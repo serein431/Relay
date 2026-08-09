@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
+import { copyText } from "./lib/clipboard";
 import {
   listShareHistory,
   resumeSavedShareUpload,
@@ -104,8 +105,12 @@ export default function ShareHistoryPanel({
   }, [records]);
 
   const copy = async (record: ShareHistoryRecord) => {
-    await navigator.clipboard.writeText(record.share_url);
-    onNotice("完整分享链接已复制。");
+    try {
+      await copyText(record.share_url);
+      onNotice("完整分享链接已复制。");
+    } catch {
+      onNotice("复制失败，请手动选择链接复制。");
+    }
   };
 
   const revoke = async (record: ShareHistoryRecord) => {
@@ -142,8 +147,12 @@ export default function ShareHistoryPanel({
           item.share_id === result.record.share_id ? result.record : item,
         ),
       );
-      await navigator.clipboard.writeText(result.record.share_url);
-      onNotice("密文已经上传，完整分享链接已复制。");
+      try {
+        await copyText(result.record.share_url);
+        onNotice("密文已经上传，完整分享链接已复制。");
+      } catch {
+        onNotice("密文已经上传。自动复制失败，请点击“复制链接”。");
+      }
     } catch (caught) {
       setError(errorMessage(caught));
     } finally {

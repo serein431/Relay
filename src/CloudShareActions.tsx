@@ -1,4 +1,5 @@
 import { useState } from "react";
+import { copyText } from "./lib/clipboard";
 import { revokeSavedShare, uploadShare } from "./lib/tauri";
 import { DEFAULT_SHARE_SERVICE_BASE_URL } from "./lib/share-service";
 import type { ExportRelaypackResult, UploadShareResult } from "./types";
@@ -53,8 +54,12 @@ export default function CloudShareActions({
       setShare(result);
       setRevoked(false);
       onHistoryChanged?.();
-      await navigator.clipboard.writeText(result.share_url);
-      onNotice("加密分享链接已生成并复制，撤销凭据已经保存在本机。");
+      try {
+        await copyText(result.share_url);
+        onNotice("加密分享链接已生成并复制，撤销凭据已经保存在本机。");
+      } catch {
+        onNotice("加密分享链接已经生成。自动复制失败，请点击“复制链接”。");
+      }
     } catch (caught) {
       if (isPendingUploadError(caught)) {
         onHistoryChanged?.();
@@ -72,8 +77,12 @@ export default function CloudShareActions({
 
   const copy = async () => {
     if (!share) return;
-    await navigator.clipboard.writeText(share.share_url);
-    onNotice("分享链接已复制。");
+    try {
+      await copyText(share.share_url);
+      onNotice("分享链接已复制。");
+    } catch {
+      onNotice("复制失败，请手动选择链接复制。");
+    }
   };
 
   const revoke = async () => {
