@@ -623,9 +623,12 @@ function landingPage(shareId: string): Response {
     .loading-line::after { content: ""; display: block; width: 45%; height: 100%; background: #2563eb; border-radius: inherit; animation: loading 1.15s ease-in-out infinite alternate; }
     @keyframes loading { from { transform: translateX(-15%); } to { transform: translateX(145%); } }
     .viewer-header { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 1.5rem; align-items: end; margin-bottom: 1.25rem; }
+    .viewer-header > div:first-child { min-width: 0; }
     .eyebrow { margin: 0 0 .45rem; color: #2563eb; font-size: .75rem; font-weight: 700; letter-spacing: .08em; text-transform: uppercase; }
     h1 { margin: 0; font-size: clamp(1.7rem, 3vw, 2.35rem); line-height: 1.15; letter-spacing: -.04em; overflow-wrap: anywhere; }
+    #share-title { max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
     .project-name { margin: .55rem 0 0; color: #667085; font-size: .94rem; }
+    #share-project { display: inline-block; max-width: min(100%, 42rem); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; vertical-align: bottom; }
     .header-actions { display: flex; flex-wrap: wrap; gap: .55rem; justify-content: flex-end; }
     .button { min-height: 2.35rem; padding: .58rem .82rem; border: 1px solid #d9e0e9; border-radius: .55rem; background: #fff; cursor: pointer; font-size: .82rem; font-weight: 650; transition: border-color .16s, background .16s, transform .16s; }
     .button:hover { border-color: #b9c4d4; background: #fafbfc; }

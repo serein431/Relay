@@ -406,7 +406,7 @@ export default function ReceivePanel({ home, onNotice }: ReceivePanelProps) {
                 </span>
                 <div>
                   <span className="eyebrow">已验证的分享包</span>
-                  <h2>{preview.title}</h2>
+                  <h2 title={preview.title}>{preview.title}</h2>
                   <p>{preview.project_name} · {agentLabel(preview.source_agent)}</p>
                 </div>
               </div>

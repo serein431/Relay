@@ -129,7 +129,9 @@ function renderShare(metadata) {
   const title = readString(source.title) || "未命名会话";
   const projectName = readString(project.display_name) || "未命名项目";
   elements.title.textContent = title;
+  elements.title.title = title;
   elements.project.textContent = projectName;
+  elements.project.title = projectName;
   elements.agent.textContent = agentName(readString(source.agent));
   elements.expiry.textContent = formatDate(metadata.expires_at);
   elements.messageCount.textContent = String(state.records.length);

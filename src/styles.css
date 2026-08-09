@@ -1130,6 +1130,26 @@ body { background: #f6f7f9; }
 .restore-success > p { color: #71717a; }
 .agent-launch-grid button { color: #18181b; background: #ffffff; border-color: #e4e4e7; border-radius: 8px; }
 .agent-launch-grid button:hover { border-color: #93c5fd; background: #eff6ff; }
+
+.workspace-heading > div:first-child,
+.handoff-title > div,
+.preview-heading > div,
+.history-card > header > div {
+  min-width: 0;
+}
+
+.workspace-heading h1,
+.session-body > strong,
+.handoff-title h2,
+.preview-heading h2,
+.history-card h2,
+.history-project {
+  display: block;
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
 .agent-launch-grid button > b { background: #2f8cff; border-radius: 8px; }
 .agent-launch-grid button > span small { color: #71717a; }
 .agent-launch-grid button:last-child > b { font-size: 8px; }

@@ -225,10 +225,15 @@ export default function ShareHistoryPanel({
               >
                 <header>
                   <div>
-                    <span className="history-project">
+                    <span
+                      className="history-project"
+                      title={record.project_name ?? "未命名项目"}
+                    >
                       {record.project_name ?? "未命名项目"}
                     </span>
-                    <h2>{record.project_title ?? "未命名交接"}</h2>
+                    <h2 title={record.project_title ?? "未命名交接"}>
+                      {record.project_title ?? "未命名交接"}
+                    </h2>
                   </div>
                   <span className={`history-status ${status.className}`}>{status.label}</span>
                 </header>

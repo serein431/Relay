@@ -733,7 +733,7 @@ function App() {
               >
                 <span className="project-index">{String(index + 1).padStart(2, "0")}</span>
                 <span className="project-copy">
-                  <strong>{project.name}</strong>
+                  <strong title={project.name}>{project.name}</strong>
                   <small>{shortPath(project.path)}</small>
                 </span>
                 <span className="project-meta">
@@ -762,7 +762,9 @@ function App() {
           <div className="workspace-heading">
             <div>
               <span className="eyebrow">当前项目</span>
-              <h1>{activeProject?.name ?? "项目会话"}</h1>
+              <h1 title={activeProject?.name ?? "项目会话"}>
+                {activeProject?.name ?? "项目会话"}
+              </h1>
             </div>
             <div className="workspace-count"><b>{sessions.length}</b><span>个会话</span></div>
           </div>
