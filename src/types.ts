@@ -205,6 +205,7 @@ export interface InspectRelaypackResult {
   ciphertext_sha256: string;
   ciphertext_bytes: number;
   preview: RelaypackPreview;
+  content_preview: SessionContentPreview;
   warnings: RelaypackDiagnostic[];
 }
 

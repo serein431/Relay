@@ -452,13 +452,192 @@ pub(crate) fn export_test_relaypack(
 pub fn inspect_relaypack(path: &str, key: &str) -> Result<InspectRelaypackResult, CommandError> {
     let loaded = load_relaypack(path, key)?;
     let warnings = warning_previews(&loaded.preview);
+    let content_preview = content_preview_from_handoff(&loaded.envelope.handoff);
     Ok(InspectRelaypackResult {
         package_path: loaded.path.to_string_lossy().into_owned(),
         ciphertext_sha256: loaded.ciphertext_sha256,
         ciphertext_bytes: loaded.ciphertext_bytes,
         preview: loaded.preview,
+        content_preview,
         warnings,
     })
+}
+
+fn content_preview_from_handoff(handoff: &Value) -> Value {
+    let source_agent = match handoff.pointer("/source/agent").and_then(Value::as_str) {
+        Some("claude_code") => "claude_code",
+        _ => "codex",
+    };
+    let session_id = handoff
+        .pointer("/source/session_id")
+        .and_then(Value::as_str)
+        .unwrap_or_default();
+    let title = handoff
+        .pointer("/source/title")
+        .and_then(Value::as_str)
+        .unwrap_or("未命名会话");
+
+    let messages = handoff
+        .pointer("/conversation/records")
+        .and_then(Value::as_array)
+        .into_iter()
+        .flatten()
+        .map(|record| {
+            let blocks = record
+                .get("blocks")
+                .and_then(Value::as_array)
+                .into_iter()
+                .flatten()
+                .filter_map(content_preview_block)
+                .collect::<Vec<_>>();
+            let mut message = json!({
+                "id": record.get("id").and_then(Value::as_str).unwrap_or("message"),
+                "role": record.get("role").and_then(Value::as_str).unwrap_or("unknown"),
+                "blocks": blocks
+            });
+            for key in ["parent_id", "turn_id", "branch_id", "timestamp"] {
+                if let Some(value) = record.get(key).and_then(Value::as_str) {
+                    message[key] = Value::String(value.to_owned());
+                }
+            }
+            message
+        })
+        .collect::<Vec<_>>();
+
+    let warning_values = handoff
+        .get("diagnostics")
+        .and_then(Value::as_array)
+        .into_iter()
+        .flatten()
+        .map(|warning| {
+            json!({
+                "code": warning.get("code").and_then(Value::as_str).unwrap_or("PACKAGE_NOTICE"),
+                "message": warning.get("message").and_then(Value::as_str).unwrap_or("分享内容包含一条说明。")
+            })
+        })
+        .collect::<Vec<_>>();
+    let preview_sha256 = serde_json::to_vec(handoff)
+        .map(|bytes| sha256_hex(&bytes))
+        .unwrap_or_default();
+
+    let mut session = json!({ "title": title });
+    if let Some(created_at) = handoff
+        .pointer("/source/created_at")
+        .and_then(Value::as_str)
+    {
+        session["created_at"] = Value::String(created_at.to_owned());
+    }
+    if let Some(updated_at) = handoff
+        .pointer("/source/updated_at")
+        .and_then(Value::as_str)
+    {
+        session["updated_at"] = Value::String(updated_at.to_owned());
+    }
+
+    json!({
+        "schema": ADAPTER_PREVIEW_SCHEMA,
+        "preview_sha256": preview_sha256,
+        "source": {
+            "agent": source_agent,
+            "session_id": session_id,
+            "read_only": true
+        },
+        "session": session,
+        "conversation": { "messages": messages },
+        "diagnostics": {
+            "warnings": warning_values,
+            "completeness": handoff
+                .pointer("/conversation/completeness")
+                .cloned()
+                .unwrap_or_else(|| json!({}))
+        }
+    })
+}
+
+fn content_preview_block(block: &Value) -> Option<Value> {
+    let kind = block.get("kind").and_then(Value::as_str)?;
+    let classification = block
+        .get("classification")
+        .and_then(Value::as_str)
+        .unwrap_or("project_owned");
+    let mut result = json!({
+        "kind": kind,
+        "classification": classification
+    });
+    if let Some(call_id) = block.get("call_id").and_then(Value::as_str) {
+        result["call_id"] = Value::String(call_id.to_owned());
+    }
+    if let Some(status) = block.get("status").and_then(Value::as_str) {
+        result["status"] = Value::String(status.to_owned());
+    }
+    if let Some(policy) = block.get("replay_policy").and_then(Value::as_str) {
+        result["replay_policy"] = Value::String(policy.to_owned());
+    }
+
+    match kind {
+        "text" => {
+            result["text"] = Value::String(
+                block
+                    .get("text")
+                    .and_then(Value::as_str)
+                    .unwrap_or_default()
+                    .to_owned(),
+            );
+        }
+        "tool_call" => {
+            result["name"] = Value::String(
+                block
+                    .get("tool_name")
+                    .and_then(Value::as_str)
+                    .unwrap_or("未知工具")
+                    .to_owned(),
+            );
+            result["input"] = block.get("arguments").cloned().unwrap_or(Value::Null);
+        }
+        "tool_result" => {
+            let output = block
+                .get("content")
+                .and_then(Value::as_array)
+                .into_iter()
+                .flatten()
+                .filter_map(|item| item.get("text").and_then(Value::as_str))
+                .collect::<Vec<_>>()
+                .join("\n\n");
+            result["output"] = Value::String(output);
+            result["is_error"] =
+                Value::Bool(block.get("status").and_then(Value::as_str) == Some("error"));
+        }
+        "source_context" => {
+            result["text"] = Value::String(
+                block
+                    .get("text")
+                    .and_then(Value::as_str)
+                    .unwrap_or_default()
+                    .to_owned(),
+            );
+            if let Some(path) = block.get("logical_path").and_then(Value::as_str) {
+                result["source"] = json!({ "filename": path.trim_start_matches("repo://") });
+            }
+        }
+        "unsupported" => {
+            result["text"] = Value::String(
+                block
+                    .get("safe_summary")
+                    .and_then(Value::as_str)
+                    .unwrap_or("这条历史记录无法显示。")
+                    .to_owned(),
+            );
+            result["native_type"] = Value::String(
+                block
+                    .get("original_type")
+                    .and_then(Value::as_str)
+                    .unwrap_or("unknown")
+                    .to_owned(),
+            );
+        }
+        _ => return None,
+    }
+    Some(result)
 }
 
 pub fn restore_relaypack(
@@ -5763,6 +5942,77 @@ mod tests {
         assert!(!handoff_has_importable_session(&tool_only));
     }
 
+    #[test]
+    fn receive_content_preview_preserves_block_order_and_read_only_tools() {
+        let handoff = json!({
+            "source": {
+                "agent": "codex",
+                "session_id": "session-1",
+                "title": "顺序检查"
+            },
+            "conversation": {
+                "completeness": {"status": "complete"},
+                "records": [{
+                    "id": "record-1",
+                    "role": "assistant",
+                    "blocks": [
+                        {"kind": "text", "classification": "user_visible", "text": "开始"},
+                        {
+                            "kind": "tool_call",
+                            "classification": "user_visible",
+                            "call_id": "call-1",
+                            "tool_name": "read_file",
+                            "arguments": {"path": "README.md"},
+                            "status": "completed",
+                            "replay_policy": "never"
+                        },
+                        {
+                            "kind": "tool_result",
+                            "classification": "user_visible",
+                            "call_id": "call-1",
+                            "status": "success",
+                            "replay_policy": "never",
+                            "content": [{"kind": "text", "text": "Relay"}]
+                        },
+                        {"kind": "text", "classification": "user_visible", "text": "结束"}
+                    ]
+                }]
+            },
+            "diagnostics": []
+        });
+
+        let preview = content_preview_from_handoff(&handoff);
+        let blocks = preview
+            .pointer("/conversation/messages/0/blocks")
+            .and_then(Value::as_array)
+            .unwrap();
+
+        assert_eq!(blocks[0].get("text").and_then(Value::as_str), Some("开始"));
+        assert_eq!(
+            blocks[1].get("kind").and_then(Value::as_str),
+            Some("tool_call")
+        );
+        assert_eq!(
+            blocks[1].get("replay_policy").and_then(Value::as_str),
+            Some("never")
+        );
+        assert_eq!(
+            blocks[2].get("kind").and_then(Value::as_str),
+            Some("tool_result")
+        );
+        assert_eq!(
+            blocks[2].get("output").and_then(Value::as_str),
+            Some("Relay")
+        );
+        assert_eq!(blocks[3].get("text").and_then(Value::as_str), Some("结束"));
+        assert_eq!(
+            preview
+                .pointer("/source/read_only")
+                .and_then(Value::as_bool),
+            Some(true)
+        );
+    }
+
     fn default_request(output_path: &Path) -> ExportRelaypackRequest {
         ExportRelaypackRequest {
             agent: AgentProvider::Codex,
@@ -8063,6 +8313,18 @@ mod tests {
         let result = export_from_preview(request, adapter_preview(sample_messages(), "complete"));
         let inspected = inspect_relaypack(&result.package_path, &result.key_fragment).unwrap();
         assert!(inspected.preview.git_included);
+        assert_eq!(
+            inspected
+                .content_preview
+                .pointer("/source/read_only")
+                .and_then(Value::as_bool),
+            Some(true)
+        );
+        assert!(inspected
+            .content_preview
+            .pointer("/conversation/messages")
+            .and_then(Value::as_array)
+            .is_some_and(|messages| !messages.is_empty()));
         let loaded = load_relaypack(&result.package_path, &result.key_fragment).unwrap();
         assert_eq!(
             loaded

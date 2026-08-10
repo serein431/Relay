@@ -312,6 +312,7 @@ pub fn download_share(request: DownloadShareRequest) -> Result<DownloadShareResu
         ciphertext_sha256: inspected.ciphertext_sha256,
         ciphertext_bytes: inspected.ciphertext_bytes,
         preview: inspected.preview,
+        content_preview: inspected.content_preview,
         warnings: inspected.warnings,
     })
 }

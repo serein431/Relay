@@ -40,6 +40,10 @@ function statusOf(record: ShareHistoryRecord): {
   return { className: "is-active", label: "可使用", available: true };
 }
 
+function hasEnded(record: ShareHistoryRecord): boolean {
+  return record.status === "revoked" || isExpired(record);
+}
+
 export default function ShareHistoryPanel({
   refreshKey,
   onNotice,
@@ -133,6 +137,100 @@ export default function ShareHistoryPanel({
     }
   };
 
+  const currentRecords = records.filter((record) => !hasEnded(record));
+  const endedRecords = records.filter(hasEnded);
+
+  const renderRecord = (record: ShareHistoryRecord) => {
+    const status = statusOf(record);
+    const isConfirming = confirming === record.share_id;
+    const isRevoking = revoking === record.share_id;
+    return (
+      <article
+        className={`history-card${record.status === "pending_upload" ? " is-pending" : ""}`}
+        key={record.share_id}
+      >
+        <header>
+          <div>
+            <span
+              className="history-project"
+              title={record.project_name ?? "未命名项目"}
+            >
+              {record.project_name ?? "未命名项目"}
+            </span>
+            <h2 title={record.project_title ?? "未命名会话"}>
+              {record.project_title ?? "未命名会话"}
+            </h2>
+          </div>
+          <span className={`history-status ${status.className}`}>{status.label}</span>
+        </header>
+
+        {manualCopy === record.share_id && status.available ? (
+          <label className="history-manual-copy">
+            <span>手动复制链接</span>
+            <textarea
+              readOnly
+              value={record.share_url}
+              onFocus={(event) => event.currentTarget.select()}
+            />
+          </label>
+        ) : null}
+
+        <dl className="history-metadata">
+          <div><dt>创建</dt><dd>{formatDate(record.created_at)}</dd></div>
+          <div><dt>到期</dt><dd>{formatDate(record.expires_at)}</dd></div>
+        </dl>
+
+        <footer>
+          {record.status === "pending_upload" ? (
+            <div className="history-card-actions">
+              <button
+                type="button"
+                className="is-resume"
+                onClick={() => void resume(record)}
+                disabled={!record.package_exists || resuming !== null || isRevoking}
+                title={record.package_exists ? undefined : "本地分享文件已移动或删除，只能撤销"}
+              >
+                {resuming === record.share_id ? "正在继续" : "继续上传"}
+              </button>
+              <button
+                type="button"
+                className={isConfirming ? "is-confirming" : ""}
+                onClick={() => void revoke(record)}
+                onBlur={() => setConfirming((value) => value === record.share_id ? null : value)}
+                disabled={isRevoking || resuming !== null}
+              >
+                {isRevoking ? "正在撤销" : isConfirming ? "确认撤销" : "撤销"}
+              </button>
+            </div>
+          ) : status.available ? (
+            <div className="history-card-actions">
+              <button
+                type="button"
+                className="is-copy"
+                onClick={() => void copy(record)}
+              >
+                复制链接
+              </button>
+              <button
+                type="button"
+                className={isConfirming ? "is-confirming" : ""}
+                onClick={() => void revoke(record)}
+                onBlur={() => setConfirming((value) => value === record.share_id ? null : value)}
+                disabled={isRevoking || resuming !== null}
+              >
+                {isRevoking ? "正在撤销" : isConfirming ? "确认撤销" : "撤销链接"}
+              </button>
+            </div>
+          ) : (
+            <span className="history-ended-at">
+              {record.revoked_at ? `撤销于 ${formatDate(record.revoked_at)}` : status.label}
+            </span>
+          )}
+        </footer>
+      </article>
+    );
+  };
+
   return (
     <section className="share-history-shell">
       <main className="share-history-main">
@@ -167,98 +265,19 @@ export default function ShareHistoryPanel({
           </div>
         ) : null}
 
-        <div className="history-list">
-          {records.map((record) => {
-            const status = statusOf(record);
-            const isConfirming = confirming === record.share_id;
-            const isRevoking = revoking === record.share_id;
-            return (
-              <article
-                className={`history-card${record.status === "pending_upload" ? " is-pending" : ""}`}
-                key={record.share_id}
-              >
-                <header>
-                  <div>
-                    <span
-                      className="history-project"
-                      title={record.project_name ?? "未命名项目"}
-                    >
-                      {record.project_name ?? "未命名项目"}
-                    </span>
-                    <h2 title={record.project_title ?? "未命名会话"}>
-                      {record.project_title ?? "未命名会话"}
-                    </h2>
-                  </div>
-                  <span className={`history-status ${status.className}`}>{status.label}</span>
-                </header>
+        {currentRecords.length > 0 ? (
+          <div className="history-list">{currentRecords.map(renderRecord)}</div>
+        ) : null}
 
-                {manualCopy === record.share_id && status.available ? (
-                  <label className="history-manual-copy">
-                    <span>手动复制链接</span>
-                    <textarea
-                      readOnly
-                      value={record.share_url}
-                      onFocus={(event) => event.currentTarget.select()}
-                    />
-                  </label>
-                ) : null}
-
-                <dl className="history-metadata">
-                  <div><dt>创建</dt><dd>{formatDate(record.created_at)}</dd></div>
-                  <div><dt>到期</dt><dd>{formatDate(record.expires_at)}</dd></div>
-                </dl>
-
-                <footer>
-                  {record.status === "pending_upload" ? (
-                    <div className="history-card-actions">
-                      <button
-                        type="button"
-                        className="is-resume"
-                        onClick={() => void resume(record)}
-                        disabled={!record.package_exists || resuming !== null || isRevoking}
-                        title={record.package_exists ? undefined : "本地分享文件已移动或删除，只能撤销"}
-                      >
-                        {resuming === record.share_id ? "正在继续" : "继续上传"}
-                      </button>
-                      <button
-                        type="button"
-                        className={isConfirming ? "is-confirming" : ""}
-                        onClick={() => void revoke(record)}
-                        onBlur={() => setConfirming((value) => value === record.share_id ? null : value)}
-                        disabled={isRevoking || resuming !== null}
-                      >
-                        {isRevoking ? "正在撤销" : isConfirming ? "确认撤销" : "撤销"}
-                      </button>
-                    </div>
-                  ) : status.available ? (
-                    <div className="history-card-actions">
-                      <button
-                        type="button"
-                        className="is-copy"
-                        onClick={() => void copy(record)}
-                      >
-                        复制链接
-                      </button>
-                      <button
-                        type="button"
-                        className={isConfirming ? "is-confirming" : ""}
-                        onClick={() => void revoke(record)}
-                        onBlur={() => setConfirming((value) => value === record.share_id ? null : value)}
-                        disabled={isRevoking || resuming !== null}
-                      >
-                        {isRevoking ? "正在撤销" : isConfirming ? "确认撤销" : "撤销链接"}
-                      </button>
-                    </div>
-                  ) : (
-                    <span className="history-ended-at">
-                      {record.revoked_at ? `撤销于 ${formatDate(record.revoked_at)}` : status.label}
-                    </span>
-                  )}
-                </footer>
-              </article>
-            );
-          })}
-        </div>
+        {endedRecords.length > 0 ? (
+          <details className="history-ended-group">
+            <summary>
+              <span>已结束</span>
+              <small>{endedRecords.length} 条</small>
+            </summary>
+            <div className="history-list">{endedRecords.map(renderRecord)}</div>
+          </details>
+        ) : null}
       </main>
     </section>
   );

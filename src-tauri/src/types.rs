@@ -440,6 +440,7 @@ pub struct InspectRelaypackResult {
     pub ciphertext_sha256: String,
     pub ciphertext_bytes: u64,
     pub preview: RelaypackPreview,
+    pub content_preview: Value,
     pub warnings: Vec<RelaypackDiagnosticPreview>,
 }
 
@@ -633,6 +634,7 @@ pub struct DownloadShareResult {
     pub ciphertext_sha256: String,
     pub ciphertext_bytes: u64,
     pub preview: RelaypackPreview,
+    pub content_preview: Value,
     pub warnings: Vec<RelaypackDiagnosticPreview>,
 }
 

@@ -90,9 +90,9 @@ describe("接收分享包", () => {
     expect(message).toContain("未能自动打开");
   });
 
-  it("ChatGPT 只说明已经发送打开请求，不把系统回调当作打开成功", () => {
+  it("ChatGPT 只说明正在打开，不把系统回调当作打开成功", () => {
     const message = nativeImportMessage(importResult({ open_status: "requested" }));
-    expect(message).toContain("发送打开请求");
+    expect(message).toContain("正在打开这条任务");
     expect(message).not.toContain("已经导入并打开");
     expect(nativeImportOpenNotice(importResult({ open_status: "requested" }))).toBeNull();
   });

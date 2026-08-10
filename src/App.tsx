@@ -370,6 +370,68 @@ function FilePicker({
   );
 }
 
+function WorkspaceLoadingScreen() {
+  const [elapsedSeconds, setElapsedSeconds] = useState(0);
+
+  useEffect(() => {
+    const startedAt = Date.now();
+    const timer = window.setInterval(() => {
+      setElapsedSeconds(Math.floor((Date.now() - startedAt) / 1_000));
+    }, 1_000);
+    return () => window.clearInterval(timer);
+  }, []);
+
+  const waitingCopy = elapsedSeconds >= 8
+    ? "会话较多或文件较大，Relay 仍在继续读取。"
+    : "正在等待本机读取完成。";
+
+  return (
+    <main className="loading-screen" aria-busy="true" aria-live="polite">
+      <section className="workspace-loading-card">
+        <header>
+          <div className="relay-mark large"><span>R</span><i /><b /></div>
+          <div>
+            <span>Relay</span>
+            <h1>正在读取本机会话</h1>
+            <p>正在检查 ChatGPT 和 Claude Code 的本机记录。会话较多时需要一些时间。</p>
+          </div>
+        </header>
+
+        <div
+          className="workspace-loading-progress"
+          role="progressbar"
+          aria-label="读取本机会话"
+          aria-valuetext={`${waitingCopy} 已等待 ${elapsedSeconds} 秒`}
+        >
+          <i />
+        </div>
+
+        <div className="workspace-loading-status" role="status">
+          <span>{waitingCopy}</span>
+          <time>{elapsedSeconds} 秒</time>
+        </div>
+
+        <div className="workspace-loading-stages" aria-label="正在读取的内容">
+          <span><i />查找会话目录</span>
+          <span><i />读取标题和时间</span>
+          <span><i />整理项目与会话</span>
+        </div>
+
+        <div className="workspace-loading-preview" aria-hidden="true">
+          {[0, 1, 2].map((item) => (
+            <div key={item}>
+              <i />
+              <span><b /><em /></span>
+            </div>
+          ))}
+        </div>
+
+        <small>Relay 只读取本机记录，不会修改原会话。</small>
+      </section>
+    </main>
+  );
+}
+
 function App() {
   const [view, setView] = useState<AppView>("sessions");
   const [snapshot, setSnapshot] = useState<WorkspaceSnapshot | null>(null);
@@ -709,46 +771,7 @@ function App() {
   };
 
   if (!snapshot) {
-    return (
-      <main className="loading-screen" aria-busy="true" aria-live="polite">
-        <section className="workspace-loading-card">
-          <header>
-            <div className="relay-mark large"><span>R</span><i /><b /></div>
-            <div>
-              <span>Relay</span>
-              <h1>正在读取本机会话</h1>
-              <p>正在检查 ChatGPT 和 Claude Code 的本机记录。会话较多时需要一些时间。</p>
-            </div>
-          </header>
-
-          <div
-            className="workspace-loading-progress"
-            role="progressbar"
-            aria-label="读取本机会话"
-            aria-valuetext="正在读取"
-          >
-            <i />
-          </div>
-
-          <div className="workspace-loading-stages" aria-label="读取内容">
-            <span><i />查找会话目录</span>
-            <span><i />读取标题和时间</span>
-            <span><i />整理项目与会话</span>
-          </div>
-
-          <div className="workspace-loading-preview" aria-hidden="true">
-            {[0, 1, 2].map((item) => (
-              <div key={item}>
-                <i />
-                <span><b /><em /></span>
-              </div>
-            ))}
-          </div>
-
-          <small>此过程只读取会话，不会修改任何记录。</small>
-        </section>
-      </main>
-    );
+    return <WorkspaceLoadingScreen />;
   }
 
   if (snapshot.source === "unavailable") {
@@ -887,9 +910,7 @@ function App() {
       <main className="workspace">
         <section className="session-column">
           <div className="workspace-heading">
-            <h1 title={activeProject?.name ?? "项目会话"}>
-              {activeProject?.name ?? "项目会话"}
-            </h1>
+            <h1>会话</h1>
             <div className="workspace-count"><b>{sessions.length}</b><span>个会话</span></div>
           </div>
 

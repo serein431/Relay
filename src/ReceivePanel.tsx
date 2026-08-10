@@ -10,6 +10,7 @@ import { copyText } from "./lib/clipboard";
 import { chooseDirectory, chooseRelaypackFile } from "./lib/dialog";
 import { userErrorMessage } from "./lib/errors";
 import { shareServiceOriginFromLink } from "./lib/share-service";
+import ConversationViewer from "./ConversationViewer";
 import type {
   AgentKind,
   ImportNativeSessionResult,
@@ -174,7 +175,7 @@ export function nativeImportMessage(result: ImportNativeSessionResult): string {
   const shortID = result.session_id.slice(0, 12);
   if (result.target === "codex") {
     if (result.open_status === "requested") {
-      return `ChatGPT 任务“${result.title}”已经导入（${shortID}），并已向 ChatGPT 发送打开请求。`;
+      return `ChatGPT 任务“${result.title}”已经导入（${shortID}）。ChatGPT 正在打开这条任务。`;
     }
     if (result.open_status === "failed") {
       return `ChatGPT 任务“${result.title}”已经导入（${shortID}），但 Relay 未能自动打开。请在 ChatGPT 的本机任务列表中打开。`;
@@ -339,7 +340,7 @@ export default function ReceivePanel({ home, onNotice }: ReceivePanelProps) {
       }
       onNotice(
         result.preview.git_included
-          ? "分享已打开。请选择所属项目、接收位置和要继续使用的应用。"
+          ? "分享已打开。请选择本机仓库、接收位置和要继续使用的应用。"
           : "分享已打开。请确认接收位置并选择要继续使用的应用。",
       );
     } catch (caught) {
@@ -437,7 +438,7 @@ export default function ReceivePanel({ home, onNotice }: ReceivePanelProps) {
     setChatgptOpenNotice(null);
     try {
       await openImportedChatgptTask(nativeImportResult.session_id);
-      setChatgptOpenNotice("已向 ChatGPT 重新发送打开请求。");
+      setChatgptOpenNotice("ChatGPT 正在重新打开这条任务。若没有显示，请从本机任务列表中打开。");
     } catch (caught) {
       setChatgptOpenNotice(receiveErrorMessage(caught));
     } finally {
@@ -646,7 +647,8 @@ export default function ReceivePanel({ home, onNotice }: ReceivePanelProps) {
 
         {preview ? (
           <section className="receive-review-panel">
-            <article className="receive-summary-card">
+            <div className="receive-review-content">
+              <article className="receive-summary-card">
               <div className="preview-heading">
                 <div>
                   <span className="receive-verified-label"><i aria-hidden="true">✓</i> 内容已验证</span>
@@ -683,7 +685,25 @@ export default function ReceivePanel({ home, onNotice }: ReceivePanelProps) {
                 </div>
               ) : null}
 
-            </article>
+              </article>
+
+              <section className="receive-conversation-preview" aria-label="分享的聊天记录">
+                <header>
+                  <div>
+                    <h3>聊天记录</h3>
+                    <p>这里显示发送者允许分享的消息。历史工具记录只用于阅读，不会执行。</p>
+                  </div>
+                  <span>只读</span>
+                </header>
+                <ConversationViewer
+                  preview={inspection.content_preview}
+                  loading={false}
+                  error={null}
+                  onRetry={() => void inspect()}
+                  onNotice={onNotice}
+                />
+              </section>
+            </div>
 
             {!nativeImportResult ? <section className="restore-form receive-destination-card">
               <div className="restore-heading">
@@ -699,12 +719,12 @@ export default function ReceivePanel({ home, onNotice }: ReceivePanelProps) {
 
               {preview.git_included ? (
                 <div className="receive-path-selector">
-                  <span>所属项目</span>
+                  <span>本机仓库</span>
                   <button type="button" onClick={() => void selectRepository()}>
-                    <strong>{repositoryPath ? fileName(repositoryPath) : "选择本机项目"}</strong>
-                    <small>{repositoryPath || "选择发送者修改代码时使用的项目"}</small>
+                    <strong>{repositoryPath ? fileName(repositoryPath) : "选择本机 Git 仓库"}</strong>
+                    <small>{repositoryPath || "选择与发送者代码来源相同的 Git 仓库"}</small>
                   </button>
-                  <small>Relay 不会修改所选项目，接收到的文件会保存在新的文件夹中。</small>
+                  <small>Relay 不会修改这个仓库，接收到的文件会保存在新的文件夹中。</small>
                 </div>
               ) : null}
               <div className="receive-path-selector">
@@ -802,7 +822,7 @@ export default function ReceivePanel({ home, onNotice }: ReceivePanelProps) {
                     <div className="receive-chatgpt-open">
                       <p>
                         {nativeImportResult.open_status === "requested"
-                          ? "已向 ChatGPT 发送打开请求。"
+                          ? "任务已导入到 ChatGPT。ChatGPT 正在打开这条任务。"
                           : "任务已导入，可从 ChatGPT 的本机任务列表打开。"}
                       </p>
                       {canRetryChatgptOpen ? (
@@ -811,7 +831,7 @@ export default function ReceivePanel({ home, onNotice }: ReceivePanelProps) {
                           disabled={openingChatgpt}
                           onClick={() => void reopenChatgpt()}
                         >
-                          {openingChatgpt ? "正在打开" : "再次打开 ChatGPT"}
+                          {openingChatgpt ? "正在打开" : "重新打开 ChatGPT"}
                         </button>
                       ) : null}
                       {chatgptOpenNotice ? <small role="status">{chatgptOpenNotice}</small> : null}
@@ -819,27 +839,6 @@ export default function ReceivePanel({ home, onNotice }: ReceivePanelProps) {
                   ) : null}
                   {openNotice ? (
                     <p className="receive-open-warning">{openNotice}</p>
-                  ) : null}
-
-                  {nativeImportResult ? (
-                    <details className="receive-import-details">
-                      <summary>查看导入记录</summary>
-                      <dl>
-                        <div><dt>会话编号</dt><dd>{nativeImportResult.session_id}</dd></div>
-                        <div><dt>会话文件</dt><dd>{nativeImportResult.verification.session_file ? "检查通过" : "检查失败"}</dd></div>
-                        <div><dt>会话列表记录</dt><dd>{nativeImportResult.verification.index ? "检查通过" : "检查失败"}</dd></div>
-                        {nativeImportResult.target === "codex" ? (
-                          <>
-                            <div><dt>ChatGPT 任务列表记录</dt><dd>{nativeImportResult.verification.state ? "检查通过" : "检查失败"}</dd></div>
-                            <div><dt>置顶状态</dt><dd>{nativeImportResult.verification.pinned ? "检查通过" : "检查失败"}</dd></div>
-                          </>
-                        ) : null}
-                        {nativeImportResult.backup_dir ? (
-                          <div><dt>导入前备份</dt><dd>{nativeImportResult.backup_dir}</dd></div>
-                        ) : null}
-                        <div><dt>本次新增文件</dt><dd>{nativeImportResult.created_files.length}</dd></div>
-                      </dl>
-                    </details>
                   ) : null}
 
                 </div>
