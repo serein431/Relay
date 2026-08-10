@@ -164,26 +164,28 @@ pub fn import_native_session(
         ));
     }
     if request.agent == AgentProvider::Codex {
-        match crate::chatgpt::refresh_running_catalog(Path::new(&result.target_home)) {
-            Ok(crate::chatgpt::CatalogRefreshStatus::Sent) => {
-                result.catalog_refresh_status = "sent".into();
-                result.catalog_refresh_error_code = None;
-                result.catalog_refresh_error = None;
-            }
-            Ok(crate::chatgpt::CatalogRefreshStatus::NotRunning) => {
-                result.catalog_refresh_status = "not_running".into();
-                result.catalog_refresh_error_code = None;
-                result.catalog_refresh_error = None;
-            }
-            Err(error) => {
-                result.catalog_refresh_status = "failed".into();
-                result.catalog_refresh_error_code = Some(error.code);
-                result.catalog_refresh_error = Some(error.message);
-            }
-        }
-        match crate::chatgpt::show_task_list() {
-            Ok(()) => {
-                result.open_status = "ready".into();
+        match crate::chatgpt::refresh_and_show_task(
+            Path::new(&result.target_home),
+            &result.session_id,
+        ) {
+            Ok((refresh_status, refresh_error)) => {
+                match refresh_error {
+                    Some(error) => {
+                        result.catalog_refresh_status = "failed".into();
+                        result.catalog_refresh_error_code = Some(error.code);
+                        result.catalog_refresh_error = Some(error.message);
+                    }
+                    None => {
+                        result.catalog_refresh_status = match refresh_status {
+                            crate::chatgpt::CatalogRefreshStatus::Sent => "sent",
+                            crate::chatgpt::CatalogRefreshStatus::NotRunning => "not_running",
+                        }
+                        .into();
+                        result.catalog_refresh_error_code = None;
+                        result.catalog_refresh_error = None;
+                    }
+                }
+                result.open_status = "opened".into();
                 result.open_error_code = None;
                 result.open_error = None;
             }

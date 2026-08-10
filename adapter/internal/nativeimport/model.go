@@ -93,6 +93,9 @@ type handoffBlock struct {
 	Status      string          `json:"status"`
 	Content     []handoffBlock  `json:"content"`
 	LogicalPath string          `json:"logical_path"`
+	Mapping     struct {
+		SourceType string `json:"source_type"`
+	} `json:"mapping"`
 }
 
 type transcript struct {
@@ -104,15 +107,16 @@ type transcript struct {
 }
 
 type entry struct {
-	Kind      string
-	Timestamp string
-	Role      string
-	Text      string
-	Tool      string
-	CallID    string
-	Status    string
-	Input     string
-	Output    string
+	Kind       string
+	Timestamp  string
+	Role       string
+	Text       string
+	Tool       string
+	CallID     string
+	Status     string
+	NativeType string
+	Input      string
+	Output     string
 }
 
 func Import(request Request) (Result, *ImportError) {
@@ -268,10 +272,11 @@ func transcriptFromHandoff(handoff handoffDocument) transcript {
 				}
 			case "tool_call":
 				flushText()
-				input := compactJSON(block.Arguments)
+				input := nativeToolInput(block.Arguments, block.Mapping.SourceType)
 				out.Entries = append(out.Entries, entry{
 					Kind: "tool_call", Timestamp: record.Timestamp, Tool: block.ToolName,
-					CallID: block.CallID, Status: block.Status, Input: input,
+					CallID: block.CallID, Status: block.Status,
+					NativeType: block.Mapping.SourceType, Input: input,
 				})
 				if block.CallID != "" {
 					toolNames[block.CallID] = block.ToolName
@@ -289,9 +294,16 @@ func transcriptFromHandoff(handoff handoffDocument) transcript {
 					out.Entries = append(out.Entries, entry{
 						Kind: "tool_result", Timestamp: record.Timestamp,
 						Tool:   toolNames[block.CallID],
-						CallID: block.CallID, Status: block.Status, Output: output,
+						CallID: block.CallID, Status: block.Status,
+						NativeType: block.Mapping.SourceType, Output: output,
 					})
 				}
+			case "context_compacted":
+				flushText()
+				out.Entries = append(out.Entries, entry{
+					Kind: "context_compacted", Timestamp: record.Timestamp,
+					NativeType: block.Mapping.SourceType,
+				})
 			case "source_context":
 				flushText()
 				if strings.TrimSpace(block.Text) != "" {
@@ -333,6 +345,16 @@ func compactJSON(value json.RawMessage) string {
 		return ""
 	}
 	return string(encoded)
+}
+
+func nativeToolInput(value json.RawMessage, nativeType string) string {
+	if nativeType == "custom_tool_call" {
+		var text string
+		if json.Unmarshal(value, &text) == nil {
+			return text
+		}
+	}
+	return compactJSON(value)
 }
 
 func clip(value string, limit int) string {

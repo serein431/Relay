@@ -263,6 +263,26 @@ async fn show_chatgpt_tasks() -> Result<(), CommandError> {
 }
 
 #[tauri::command]
+async fn show_chatgpt_task(session_id: String) -> Result<(), CommandError> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let codex_home = agent_home("CODEX_HOME", ".codex").ok_or_else(|| {
+            CommandError::new(
+                "home_unavailable",
+                "cannot determine the local ChatGPT data directory",
+            )
+        })?;
+        chatgpt::refresh_and_show_task(&codex_home, &session_id).map(|_| ())
+    })
+    .await
+    .map_err(|error| {
+        CommandError::new(
+            "background_task_failed",
+            format!("ChatGPT task launch failed: {error}"),
+        )
+    })?
+}
+
+#[tauri::command]
 async fn upload_share(
     app: tauri::AppHandle,
     request: UploadShareRequest,
@@ -533,6 +553,7 @@ pub fn run() {
             restore_relaypack,
             import_native_session,
             show_chatgpt_tasks,
+            show_chatgpt_task,
             upload_share,
             resume_saved_share_upload,
             list_share_history,

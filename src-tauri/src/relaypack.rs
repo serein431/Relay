@@ -620,6 +620,10 @@ fn content_preview_block(block: &Value) -> Option<Value> {
                 result["source"] = json!({ "filename": path.trim_start_matches("repo://") });
             }
         }
+        "context_compacted" => {
+            result["text"] = Value::String("上下文已自动压缩".to_owned());
+            result["native_type"] = Value::String("context_compacted".to_owned());
+        }
         "unsupported" => {
             result["text"] = Value::String(
                 block
@@ -4090,6 +4094,13 @@ fn convert_adapter_block(
             }
             Ok(Some(converted))
         }
+        "context_compacted" => Ok(Some(json!({
+            "id": block_id,
+            "kind": "context_compacted",
+            "classification": classification,
+            "mapping": mapping,
+            "preservation": "historical_record_only"
+        }))),
         "unsupported" => Ok(Some(json!({
             "id": block_id,
             "kind": "unsupported",

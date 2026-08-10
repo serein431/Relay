@@ -165,6 +165,44 @@ func TestCodexSessionUsesTheLatestTurnWorkingDirectory(t *testing.T) {
 	}
 }
 
+func TestCodexSessionPreservesNativeToolTypesAndVisibleCompactionMarker(t *testing.T) {
+	content := strings.Join([]string{
+		`{"type":"session_meta","payload":{"id":"native-events","cwd":"/tmp/native-events"}}`,
+		`{"timestamp":"2026-08-10T00:00:01Z","type":"response_item","payload":{"type":"message","id":"user-1","role":"user","content":[{"type":"input_text","text":"检查文件"}]}}`,
+		`{"timestamp":"2026-08-10T00:00:02Z","type":"response_item","payload":{"type":"custom_tool_call","id":"ctc-1","call_id":"call-1","name":"exec","input":"const result = await tools.exec_command({cmd: \"pwd\"});","status":"completed"}}`,
+		`{"timestamp":"2026-08-10T00:00:03Z","type":"response_item","payload":{"type":"custom_tool_call_output","call_id":"call-1","output":[{"type":"input_text","text":"/tmp/native-events"}]}}`,
+		`{"timestamp":"2026-08-10T00:00:04Z","type":"event_msg","payload":{"type":"context_compacted"}}`,
+	}, "\n") + "\n"
+	options := writeTemporarySession(t, AgentCodex, "native-events", []byte(content))
+	parsed, err := ParseSession(options)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var call, result, marker *Block
+	for messageIndex := range parsed.Messages {
+		for blockIndex := range parsed.Messages[messageIndex].Blocks {
+			block := &parsed.Messages[messageIndex].Blocks[blockIndex]
+			switch block.Kind {
+			case "tool_call":
+				call = block
+			case "tool_result":
+				result = block
+			case "context_compacted":
+				marker = block
+			}
+		}
+	}
+	if call == nil || call.NativeType != "custom_tool_call" || call.Name != "exec" {
+		t.Fatalf("custom tool call type was not preserved: %+v", call)
+	}
+	if result == nil || result.NativeType != "custom_tool_call_output" {
+		t.Fatalf("custom tool result type was not preserved: %+v", result)
+	}
+	if marker == nil || marker.Classification != "user_visible" || marker.NativeType != "context_compacted" {
+		t.Fatalf("visible context compaction marker was not preserved: %+v", marker)
+	}
+}
+
 func TestLegacyCodexSessionExtractsCWDWithoutExportingEnvironmentPrompt(t *testing.T) {
 	home := fixturePath(t, "codex_home")
 	parsed, err := ParseSession(SessionOptions{Agent: AgentCodex, SessionID: "legacy-session-1", ClaudeHome: fixturePath(t, "claude_home"), CodexHome: home})

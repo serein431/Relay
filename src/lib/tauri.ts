@@ -314,6 +314,10 @@ export async function showChatgptTasks(): Promise<void> {
   return invoke<void>("show_chatgpt_tasks");
 }
 
+export async function showChatgptTask(sessionId: string): Promise<void> {
+  return invoke<void>("show_chatgpt_task", { sessionId });
+}
+
 export async function uploadShare(request: UploadShareRequest): Promise<UploadShareResult> {
   return invoke<UploadShareResult>("upload_share", { request });
 }

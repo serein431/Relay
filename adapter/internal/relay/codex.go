@@ -330,6 +330,18 @@ func codexEvent(parsed *ParsedSession, state *codexState, payload map[string]any
 		parsed.Completeness.HiddenRecords++
 	case "agent_message":
 		parsed.Completeness.HiddenRecords++
+	case "context_compacted":
+		appendCodexMessage(parsed, state, Message{
+			ID:        makeMessageID(AgentCodex, state.sessionID, line, ""),
+			TurnID:    state.currentTurnID,
+			Timestamp: timestamp,
+			Role:      "system",
+			Blocks: []Block{{
+				Kind:           "context_compacted",
+				Classification: "user_visible",
+				NativeType:     "context_compacted",
+			}},
+		})
 	default:
 		parsed.Completeness.HiddenRecords++
 	}

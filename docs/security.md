@@ -20,6 +20,8 @@ Relay 不会因为导入一个包而自动运行以下内容：
 
 `tool_call.arguments`、测试命令和交接文档中的 shell 文本都只是历史材料。Schema 要求工具块带 `semantics: historical_record` 和 `replay_policy: never`。接收端不能把它们放入执行队列。
 
+导入 ChatGPT 时可以恢复原生 `function_call` 或 `custom_tool_call` 外形，以便界面显示历史活动，但调用与结果必须成对写入并标记为已完成。`context_compacted` 只传递一个可见标记；压缩摘要、替换历史、模型私有内容和厂商隐藏状态不得进入分享包。
+
 启动 Claude Code 或 ChatGPT 也必须在 Git 恢复完成并经用户确认后进行。首条提示只要求阅读交接目录，不要求运行命令。
 
 ## 内容分类
@@ -198,11 +200,11 @@ Claude Code 导入成功后只返回参数数组 `claude --resume <新会话 ID>
 
 ChatGPT 导入完成后，Relay 先检查 `~/.codex/ipc` 目录和 `ipc.sock` 是否由当前用户拥有，拒绝连接可被其他用户写入的目录、非 socket 文件和所有者不符的 socket。检查通过后，Relay 以带长度前缀的 JSON 消息初始化连接，并发送 `query-cache-invalidate`，要求运行中的 ChatGPT 重新读取本机任务列表。消息不包含会话正文、工作目录、分享链接或凭据。
 
-刷新请求完成后，Relay 用不含本机路径、提示和任务 ID 的 `codex://threads/new` 查询 macOS 注册的处理应用，再用 Security.framework 检查 bundle ID `com.openai.codex`、OpenAI Team ID、嵌套代码和所有架构。只有候选应用通过固定签名要求后，Relay 才显示该应用。没有通过验证的应用时，新任务仍保留在本机任务列表，Relay 不会启动该应用。
+Relay 先用不含本机路径、提示和任务 ID 的 `codex://threads/new` 查询 macOS 注册的处理应用，再用 Security.framework 检查 bundle ID `com.openai.codex`、OpenAI Team ID、嵌套代码和所有架构。只有候选应用通过固定签名要求后，Relay 才显示该应用。随后 Relay 等待本机通信 socket 可用，发送刷新请求，并用同一个已验证应用打开 `codex://threads/<新任务 ID>`。这个链接只包含新建任务的 UUID，不包含聊天正文、工作目录、分享链接或凭据。没有通过验证的应用时，新任务仍保留在本机任务列表，Relay 不会启动其他应用。
 
-macOS 的完成回调只能证明通过验证的 ChatGPT 应用已经显示。任务是否已写入本机历史，由导入后的会话文件、任务索引、SQLite 记录和置顶状态共同检查，不依赖应用启动回调。Relay 不发送 `codex://threads/<新任务 ID>`，接收者从 ChatGPT 左侧任务列表顶部打开新任务。`state_5.sqlite` 不存在时不会降级为只写 JSONL，用户需要先打开一次 ChatGPT，让应用建立本机任务数据库。
+macOS 的完成回调只能证明通过验证的 ChatGPT 应用接受了打开请求，不能证明长会话已经显示完成。任务是否已写入本机历史，由导入后的会话文件、任务索引、SQLite 记录和置顶状态共同检查，不依赖应用启动回调。直接打开失败不会撤销已经完成的导入，接收者可以在 Relay 中再次打开任务或显示 ChatGPT 任务列表。`state_5.sqlite` 不存在时不会降级为只写 JSONL，用户需要先打开一次 ChatGPT，让应用建立本机任务数据库。
 
-置顶检查确认的是磁盘中的 `pinned-thread-ids`。如果 ChatGPT 没有运行，Relay 跳过本机刷新通知并启动经过签名检查的官方应用，ChatGPT 启动时会读取新任务。如果本机通信失败，任务导入结果仍然保留，界面会提示用户再次显示或重启 ChatGPT。
+置顶检查确认的是导入结束时磁盘中的 `pinned-thread-ids`。Relay 不依赖置顶列表进入任务；ChatGPT 正在运行时，它可能随后按内存中的状态重写这个文件。如果本机通信失败，任务导入结果仍然保留，界面会提示用户再次打开任务或显示任务列表。
 
 ## 日志和诊断
 

@@ -165,6 +165,7 @@ function blockLabel(block: AdapterPreviewBlock): string {
     case "tool_result": return "工具调用结果";
     case "asset_ref": return `附件${block.native_type ? ` · ${block.native_type}` : ""}`;
     case "source_context": return `项目说明${block.native_type ? ` · ${block.native_type}` : ""}`;
+    case "context_compacted": return "上下文已自动压缩";
     case "unsupported": return `未识别内容${block.native_type ? ` · ${block.native_type}` : ""}`;
     default: return block.kind || "未知内容";
   }
@@ -174,6 +175,7 @@ function blockValue(block: AdapterPreviewBlock): unknown {
   if (block.text) return block.text;
   if (block.kind === "tool_call") return block.input;
   if (block.kind === "tool_result") return block.output;
+  if (block.kind === "context_compacted") return "原会话在这里整理过上下文；压缩前的隐藏状态不会包含在分享内容中。";
   return block.source;
 }
 

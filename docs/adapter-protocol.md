@@ -215,6 +215,7 @@ Adapter 的中间消息使用：
 | `tool_result` | `call_id`, `output`, `status`, `is_error` | 历史工具结果 |
 | `asset_ref` | `source` | 指向待收集附件 |
 | `source_context` | `source`, `text` | 项目文件或说明来源 |
+| `context_compacted` | `native_type` | 原会话发生过上下文自动压缩，只保存可见事件，不保存压缩内容或隐藏状态 |
 | `unsupported` | `native_type`, `source` | 无法准确表示的可分享记录 |
 
 每个块都必须有 `classification`。当前允许 Adapter 使用：

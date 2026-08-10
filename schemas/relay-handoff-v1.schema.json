@@ -807,6 +807,9 @@
           "$ref": "#/$defs/sourceContextBlock"
         },
         {
+          "$ref": "#/$defs/contextCompactedBlock"
+        },
+        {
           "$ref": "#/$defs/unsupportedBlock"
         }
       ]
@@ -1030,6 +1033,28 @@
             },
             "asset_id": {
               "$ref": "#/$defs/stableId"
+            }
+          }
+        }
+      ],
+      "unevaluatedProperties": false
+    },
+    "contextCompactedBlock": {
+      "allOf": [
+        {
+          "$ref": "#/$defs/blockCommon"
+        },
+        {
+          "type": "object",
+          "required": [
+            "preservation"
+          ],
+          "properties": {
+            "kind": {
+              "const": "context_compacted"
+            },
+            "preservation": {
+              "const": "historical_record_only"
             }
           }
         }

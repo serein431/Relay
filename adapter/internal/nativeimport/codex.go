@@ -164,7 +164,7 @@ func synthesizeCodexSession(source transcript, sessionID, title, cwd string, now
 	turnCount := 0
 	totalVisibleBytes := 0
 	turnVisibleBytes := 0
-	toolCalls := map[string]bool{}
+	toolCalls := map[string]string{}
 	startTurn := func(timestamp, message string, includeResponseItem bool) {
 		turnCount++
 		turn = fmt.Sprintf("relay-import-turn-%d", turnCount)
@@ -251,19 +251,17 @@ func synthesizeCodexSession(source transcript, sessionID, title, cwd string, now
 			if callID == "" {
 				callID = fmt.Sprintf("relay-import-tool-%d", index)
 			}
-			toolCalls[callID] = true
+			toolType := codexToolCallType(item.NativeType)
+			toolCalls[callID] = toolType
 			arguments := item.Input
 			if arguments == "" {
 				arguments = "{}"
 			}
 			totalVisibleBytes += len(arguments)
 			turnVisibleBytes += len(arguments)
+			payload := codexToolCallPayload(toolType, item.Tool, callID, arguments, turn, index)
 			items = append(items, map[string]any{
-				"timestamp": timestamp, "type": "response_item",
-				"payload": map[string]any{
-					"type": "function_call", "name": safeToolName(item.Tool), "namespace": "relay_source",
-					"call_id": callID, "arguments": arguments, "status": "completed",
-				},
+				"timestamp": timestamp, "type": "response_item", "payload": payload,
 			})
 		case "tool_result":
 			if turn == "" {
@@ -273,7 +271,8 @@ func synthesizeCodexSession(source transcript, sessionID, title, cwd string, now
 			if callID == "" {
 				callID = fmt.Sprintf("relay-import-tool-result-%d", index)
 			}
-			if !toolCalls[callID] {
+			toolType, matched := toolCalls[callID]
+			if !matched {
 				message := unmatchedToolResultText(item)
 				totalVisibleBytes += len(message)
 				turnVisibleBytes += len(message)
@@ -294,12 +293,18 @@ func synthesizeCodexSession(source transcript, sessionID, title, cwd string, now
 			}
 			totalVisibleBytes += len(item.Output)
 			turnVisibleBytes += len(item.Output)
+			payload := codexToolResultPayload(toolType, item.NativeType, callID, item.Output, turn, index)
 			items = append(items, map[string]any{
-				"timestamp": timestamp, "type": "response_item",
-				"payload": map[string]any{
-					"type": "function_call_output", "call_id": callID,
-					"output": item.Output, "status": "completed",
-				},
+				"timestamp": timestamp, "type": "response_item", "payload": payload,
+			})
+		case "context_compacted":
+			if turn == "" {
+				continue
+			}
+			items = append(items, map[string]any{
+				"timestamp": timestamp,
+				"type":      "event_msg",
+				"payload":   map[string]any{"type": "context_compacted"},
 			})
 		}
 	}
@@ -352,6 +357,64 @@ func safeToolName(value string) string {
 		}
 	}
 	return clip(builder.String(), 64)
+}
+
+func codexToolCallType(nativeType string) string {
+	switch nativeType {
+	case "custom_tool_call":
+		return "custom_tool_call"
+	default:
+		return "function_call"
+	}
+}
+
+func codexToolCallPayload(toolType, toolName, callID, input, turn string, index int) map[string]any {
+	name, namespace := nativeToolName(toolName)
+	metadata := map[string]any{"turn_id": turn}
+	payload := map[string]any{
+		"type": toolType, "call_id": callID, "name": name, "status": "completed",
+		"internal_chat_message_metadata_passthrough": metadata,
+	}
+	if toolType == "custom_tool_call" {
+		payload["id"] = fmt.Sprintf("ctc_relay_%d", index)
+		payload["input"] = input
+		return payload
+	}
+	payload["id"] = fmt.Sprintf("fc_relay_%d", index)
+	payload["arguments"] = input
+	if namespace != "" {
+		payload["namespace"] = namespace
+	}
+	return payload
+}
+
+func codexToolResultPayload(callType, nativeType, callID, output, turn string, index int) map[string]any {
+	resultType := "function_call_output"
+	resultID := fmt.Sprintf("fco_relay_%d", index)
+	value := any(output)
+	if callType == "custom_tool_call" || nativeType == "custom_tool_call_output" {
+		resultType = "custom_tool_call_output"
+		resultID = fmt.Sprintf("ctco_relay_%d", index)
+		var decoded any
+		if json.Unmarshal([]byte(output), &decoded) == nil {
+			value = decoded
+		}
+	}
+	return map[string]any{
+		"type": resultType, "id": resultID, "call_id": callID, "output": value, "status": "completed",
+		"internal_chat_message_metadata_passthrough": map[string]any{"turn_id": turn},
+	}
+}
+
+func nativeToolName(value string) (string, string) {
+	value = strings.TrimSpace(value)
+	if value == "" {
+		return "historical_tool", ""
+	}
+	if index := strings.IndexByte(value, '.'); index > 0 && index < len(value)-1 {
+		return safeToolName(value[index+1:]), safeToolName(value[:index])
+	}
+	return safeToolName(value), ""
 }
 
 func appendCodexIndex(path, sessionID, title string, now time.Time) error {

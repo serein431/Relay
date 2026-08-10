@@ -88,6 +88,10 @@ describe("完整聊天记录", () => {
     })).toContain("/tmp/relay");
     expect(toolStatusLabel("completed")).toBe("已完成");
     expect(toolStatusLabel("error")).toBe("失败");
+    expect(blockLabel({ kind: "context_compacted", classification: "user_visible" }))
+      .toBe("上下文已自动压缩");
+    expect(blockContent({ kind: "context_compacted", classification: "user_visible" }))
+      .toContain("隐藏状态没有包含");
   });
 
   it("数千条记录的会话先显示前 200 条，不为尚未显示的消息生成目录项", () => {

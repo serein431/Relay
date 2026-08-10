@@ -43,7 +43,7 @@ function importResult(
     created_files: ["/tmp/codex-home/sessions/task.jsonl"],
     dry_run: false,
     verification: { session_file: true, index: true, state: true, pinned: true },
-    open_status: "ready",
+    open_status: "opened",
     ...overrides,
   };
 }
@@ -90,33 +90,31 @@ describe("接收分享包", () => {
     expect(message).toContain("未能显示 ChatGPT");
   });
 
-  it("ChatGPT 导入成功后说明任务已置顶，不声称自动进入任务", () => {
-    const message = nativeImportMessage(importResult({ open_status: "ready" }));
-    expect(message).toContain("已置顶");
-    expect(message).toContain("任务列表顶部");
-    expect(message).not.toContain("已发送打开请求");
-    expect(nativeImportOpenNotice(importResult({ open_status: "ready" }))).toBeNull();
+  it("ChatGPT 导入成功后说明任务已经直接打开", () => {
+    const message = nativeImportMessage(importResult({ open_status: "opened" }));
+    expect(message).toContain("已经导入并打开");
+    expect(message).not.toContain("任务列表顶部");
+    expect(nativeImportOpenNotice(importResult({ open_status: "opened" }))).toBeNull();
   });
 
   it("ChatGPT 运行中时说明已经刷新任务列表", () => {
     const result = importResult({
-      open_status: "ready",
+      open_status: "opened",
       catalog_refresh_status: "sent",
     });
-    expect(nativeImportMessage(result)).toContain("重新读取本机任务列表");
+    expect(nativeImportMessage(result)).toContain("已经导入并打开");
     expect(nativeImportOpenNotice(result)).toBeNull();
   });
 
   it("ChatGPT 任务列表刷新失败时保留导入结果并给出恢复步骤", () => {
     const result = importResult({
-      open_status: "ready",
+      open_status: "opened",
       catalog_refresh_status: "failed",
       catalog_refresh_error_code: "chatgpt_catalog_refresh_failed",
       catalog_refresh_error: "connection reset",
     });
     expect(nativeImportMessage(result)).toContain("已经导入");
-    expect(nativeImportOpenNotice(result)).toContain("重新启动 ChatGPT");
-    expect(nativeImportOpenNotice(result)).not.toContain("connection reset");
+    expect(nativeImportOpenNotice(result)).toBeNull();
   });
 
   it("ChatGPT 需要手动打开时不显示内部英文错误", () => {
@@ -125,9 +123,9 @@ describe("接收分享包", () => {
       open_error_code: "chatgpt_handler_not_found",
       open_error: "no ChatGPT application is registered to open codex:// links",
     });
-    expect(nativeImportMessage(result)).toContain("任务列表顶部");
+    expect(nativeImportMessage(result)).toContain("标题或编号");
     expect(nativeImportOpenNotice(result)).toBe(
-      "任务已经导入并置顶。Relay 未找到可显示的 ChatGPT 应用，请打开 ChatGPT 后从任务列表顶部进入。",
+      "任务已经导入。Relay 未找到可显示的 ChatGPT 应用，请打开 ChatGPT 后按标题或任务编号查找。",
     );
     expect(nativeImportOpenNotice(result)).not.toContain("codex://");
   });

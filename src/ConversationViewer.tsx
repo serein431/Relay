@@ -42,6 +42,7 @@ export function blockLabel(block: AdapterPreviewBlock): string {
     case "tool_call": return block.name ? `工具调用 · ${block.name}` : "工具调用";
     case "tool_result": return "工具结果";
     case "source_context": return block.native_type ? `项目说明 · ${block.native_type}` : "项目说明";
+    case "context_compacted": return "上下文已自动压缩";
     case "asset_ref": return block.native_type ? `附件 · ${block.native_type}` : "附件";
     case "unsupported": return block.native_type ? `未识别内容 · ${block.native_type}` : "未识别内容";
     default: return block.kind || "其他内容";
@@ -72,6 +73,7 @@ function stringify(value: unknown): string {
 
 export function blockContent(block: AdapterPreviewBlock): string {
   if (block.text !== undefined) return block.text;
+  if (block.kind === "context_compacted") return "原会话在这里整理过上下文；压缩前的隐藏状态没有包含在分享内容中。";
   if (block.kind === "tool_call") return stringify(block.input);
   if (block.kind === "tool_result") return stringify(block.output);
   return stringify(block.source);

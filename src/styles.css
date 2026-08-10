@@ -1293,7 +1293,7 @@ body { background: #f6f7f9; font-size: 13px; }
 }
 
 .receive-page-inner {
-  width: min(100%, 1060px);
+  width: min(100%, 1440px);
   margin: 0 auto;
   padding: 26px clamp(22px, 3vw, 38px) 42px;
 }
@@ -1389,8 +1389,8 @@ body { background: #f6f7f9; font-size: 13px; }
 
 .receive-review-panel {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) minmax(390px, .72fr);
-  gap: 14px;
+  grid-template-columns: minmax(0, 1.55fr) minmax(360px, .65fr);
+  gap: 18px;
   align-items: start;
   margin-top: 16px;
 }
@@ -1439,7 +1439,10 @@ body { background: #f6f7f9; font-size: 13px; }
   font-size: 12px;
   font-weight: 600;
 }
-.receive-conversation-preview .conversation-viewer { height: 470px; margin-top: 12px; }
+.receive-conversation-preview .conversation-viewer {
+  height: clamp(500px, 62vh, 720px);
+  margin-top: 12px;
+}
 .receive-conversation-preview .conversation-toolbar { grid-template-columns: 1fr; }
 .receive-conversation-preview .conversation-summary { justify-content: space-between; }
 .receive-conversation-preview .conversation-layout { grid-template-columns: minmax(0, 1fr); }
@@ -1566,6 +1569,11 @@ body { background: #f6f7f9; font-size: 13px; }
 }
 .receive-chatgpt-open button:hover { background: #eff6ff; }
 .receive-chatgpt-open button:disabled { color: #a1a1aa; cursor: default; background: #f4f4f5; }
+.receive-chatgpt-open button.is-secondary {
+  color: #52525b;
+  border-color: #d4d4d8;
+}
+.receive-chatgpt-open button.is-secondary:hover { background: #f4f4f5; }
 .receive-chatgpt-open small {
   flex-basis: 100%;
   color: #52525b;
@@ -1580,7 +1588,7 @@ textarea:focus-visible { outline: 2px solid var(--cobalt); outline-offset: 2px; 
 @media (max-width: 1240px) {
   .receive-page { grid-column: 2 / -1; }
   .receive-page-inner { padding-inline: 22px; }
-  .receive-review-panel { grid-template-columns: minmax(0, 1fr) minmax(370px, .72fr); }
+  .receive-review-panel { grid-template-columns: minmax(0, 1.25fr) minmax(350px, .75fr); }
   .receive-local-fields { grid-template-columns: 1fr; }
 }
 
@@ -1720,12 +1728,21 @@ textarea:focus-visible { outline: 2px solid var(--cobalt); outline-offset: 2px; 
 .share-history-main { height: 100%; padding: 24px 30px 38px; }
 .history-heading { align-items: center; padding-bottom: 17px; }
 .history-heading h1 { font-size: 27px; }
-.history-list,
+.history-list {
+  width: 100%;
+  max-width: 1280px;
+  grid-template-columns: repeat(auto-fill, minmax(min(100%, 360px), 520px));
+  align-items: start;
+}
 .history-error,
-.history-empty { width: min(100%, 960px); }
+.history-empty { width: min(100%, 760px); }
+.history-card { min-width: 0; }
+.history-card > header > div { min-width: 0; }
+.history-card > footer { flex-wrap: wrap; }
+.history-card-actions { flex-wrap: wrap; }
 .history-card > footer { justify-content: flex-end; }
 .history-ended-group {
-  width: min(100%, 960px);
+  width: min(100%, 1280px);
   margin-top: 20px;
   border-top: 1px solid #e4e4e7;
 }

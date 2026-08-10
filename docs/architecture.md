@@ -58,7 +58,9 @@ Rust 是桌面应用的可信边界，职责包括：
 
 `relay-agent-adapter` 只读扫描 Claude Code 和 ChatGPT 的历史目录，返回会话摘要，或把一个会话解析成通用消息结构。`relay-session-importer` 只在接收者明确选择目标 Agent 后运行，把 `relay.handoff.v1` 中允许分享的记录转换为新的本机会话。
 
-导入器不会复制发送方的原始 JSONL。它只写入可见消息、项目说明和历史工具记录，不包含私有推理、认证信息或厂商内部状态。ChatGPT 使用原生标题事件、任务索引和 SQLite 的自定义名称字段保存带导入时间与短 ID 的唯一标题，标题不会作为聊天消息出现；第一条可见消息仍是发送者允许分享的原始内容或 Relay 的历史记录说明。为了避免 ChatGPT 在接收者继续对话后用第一条项目说明重写标题，SQLite 的 `first_user_message` 使用同一个导入标题作为名称提示，不改变 JSONL 中可见消息的顺序。ChatGPT 导入会新增 JSONL、追加任务索引、通过 SQLite 事务插入任务记录并设为置顶；桌面状态文件存在时也会加入其中的置顶列表。Claude Code 导入会新增项目会话 JSONL，并通过临时文件替换项目会话索引。写入前会备份相关索引、数据库文件和 ChatGPT 桌面状态。
+导入器不会复制发送方的原始 JSONL 或 SQLite。它只根据允许分享的可见消息、项目说明和历史工具记录生成新的会话，不包含私有推理、认证信息或厂商内部状态。来自 ChatGPT 的 `function_call`、`custom_tool_call` 及其结果会保留原生记录类型、工具名称和所属轮次，使 ChatGPT 能继续按原生样式显示读取文件、运行命令和编辑文件等历史活动；这些调用均写成已经完成的记录，不会进入执行队列。原会话出现过 `context_compacted` 时，只保存这一可见事件，不复制压缩摘要、替换历史或隐藏状态。
+
+ChatGPT 使用原生标题事件、任务索引和 SQLite 的自定义名称字段保存带导入时间与短 ID 的唯一标题，标题不会作为聊天消息出现；第一条可见消息仍是发送者允许分享的原始内容或 Relay 的历史记录说明。为了避免 ChatGPT 在接收者继续对话后用第一条项目说明重写标题，SQLite 的 `first_user_message` 使用同一个导入标题作为名称提示，不改变 JSONL 中可见消息的顺序。ChatGPT 导入会新增 JSONL、追加任务索引、通过 SQLite 事务插入任务记录并设为置顶；桌面状态文件存在时也会加入其中的置顶列表。Claude Code 导入会新增项目会话 JSONL，并通过临时文件替换项目会话索引。写入前会备份相关索引、数据库文件和 ChatGPT 桌面状态。
 
 把 Adapter 做成独立 sidecar 有两个原因：原生记录格式变化频繁，可以单独增加解析 fixture；解析失败也不会让桌面进程直接处理不受信任的大文件。进程通信规则见 [adapter-protocol.md](adapter-protocol.md)。
 
@@ -154,7 +156,7 @@ Rust validator 还会检查引用关系，例如资产 ID 必须唯一且真实�
 8. 验证结果会先说明分享包是否包含可导入的聊天或项目说明。只有代码或工具记录时，界面只允许保存文件，不创建空会话。用户选择目标 Agent 后，导入器分配新的会话 ID，检查目标文件、索引和 ChatGPT SQLite 中没有同名记录，再生成会话内容。
 9. ChatGPT 会话使用 UUID v7，新增 `~/.codex/sessions/.../rollout-*.jsonl`，追加 `session_index.jsonl`，通过 SQLite 事务新增任务记录并写入置顶状态；在 `.codex-global-state.json` 存在时，也把新任务加入 `pinned-thread-ids`。如果 ChatGPT 尚未建立 `state_5.sqlite`，Relay 会要求用户先打开一次 ChatGPT，不会只写一份无法出现在任务列表中的 JSONL。Claude Code 会话使用新的 UUID，新增项目 JSONL，并更新 `sessions-index.json`。
 10. 导入完成后再次检查会话文件、索引、ChatGPT SQLite 记录和置顶状态。任一步失败时，只删除本次创建的文件和记录，并返回备份位置。
-11. ChatGPT 路径先通过当前用户的 `~/.codex/ipc/ipc.sock` 发送 `query-cache-invalidate`，要求运行中的 ChatGPT 重新读取本机任务列表；随后用不含任务 ID 的 `codex://threads/new` 枚举 macOS 处理应用，并用 Security.framework 核对 OpenAI 的 bundle ID、Team ID、嵌套代码和所有架构。验签通过后，Relay 只显示 ChatGPT 主窗口，新任务已经置顶，接收者从任务列表顶部打开。Relay 不再自动打开 `codex://threads/<新任务 ID>`，以免 ChatGPT 在恢复任务前显示错误提醒。Claude Code 返回 `claude --resume <新会话 ID>`，不替用户选择终端。
+11. ChatGPT 路径先用不含任务 ID 的 `codex://threads/new` 枚举 macOS 处理应用，并用 Security.framework 核对 OpenAI 的 bundle ID、Team ID、嵌套代码和所有架构。验签通过后，Relay 显示官方 ChatGPT，等待当前用户的 `~/.codex/ipc/ipc.sock` 可用并发送 `query-cache-invalidate`，再通过同一个已验证应用打开 `codex://threads/<新任务 ID>`。打开失败不撤销导入，界面保留再次打开任务和显示任务列表的入口。Claude Code 返回 `claude --resume <新会话 ID>`，不替用户选择终端。
 
 恢复失败时不会强制删除已经创建的 worktree 或分支。错误会返回保留路径、分支 ref 和清理诊断，避免误删恢复期间由其他进程写入的文件。交接目录的 ignore 规则写进 Git common directory 的 `info/exclude`；实现会比较文件身份与内容后再替换和回退，但外部进程不受应用内锁约束，因此仍保留一个很短的并发修改窗口，详见 [security.md](security.md)。
 

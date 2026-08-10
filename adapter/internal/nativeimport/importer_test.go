@@ -148,8 +148,11 @@ func TestCodexImportCreatesNativeTaskAndIndex(t *testing.T) {
 			t.Fatalf("Codex history does not contain %q", expected)
 		}
 	}
-	if !strings.Contains(text, `"namespace":"relay_source"`) {
-		t.Fatalf("ChatGPT historical tool namespace is not API-safe: %s", text)
+	if strings.Contains(text, `"namespace":"relay_source"`) ||
+		!strings.Contains(text, `"status":"completed","type":"function_call"`) ||
+		!strings.Contains(text, `"id":"fco_relay_`) ||
+		!strings.Contains(text, `"status":"completed","type":"function_call_output"`) {
+		t.Fatalf("ChatGPT historical tool records were not stored as completed native history: %s", text)
 	}
 	index, err := os.ReadFile(filepath.Join(home, codexIndexFile))
 	if err != nil || !strings.Contains(string(index), result.SessionID) {
@@ -569,6 +572,111 @@ func TestConversationOrderIsPreserved(t *testing.T) {
 		if position < 0 || (index > 0 && position <= positions[index-1]) {
 			t.Fatalf("conversation order was not preserved: %v\n%s", positions, text)
 		}
+	}
+}
+
+func TestChatGPTImportRestoresNativeCustomToolRecordsAndCompactionMarker(t *testing.T) {
+	temp := t.TempDir()
+	cwd := filepath.Join(temp, "project")
+	home := filepath.Join(temp, "codex-home")
+	if err := os.MkdirAll(cwd, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	createCodexState(t, home)
+	handoffPath := writeHandoff(t, temp, baseHandoff([]any{
+		map[string]any{
+			"role": "user", "timestamp": "2026-08-10T00:00:01Z",
+			"blocks": []any{map[string]any{"kind": "text", "text": "检查文件"}},
+		},
+		map[string]any{
+			"role": "assistant", "timestamp": "2026-08-10T00:00:02Z",
+			"blocks": []any{map[string]any{
+				"kind": "tool_call", "call_id": "native-call", "tool_name": "exec",
+				"arguments": "const result = await tools.exec_command({cmd: \"pwd\"});",
+				"status":    "completed",
+				"mapping":   map[string]any{"source_type": "custom_tool_call"},
+			}},
+		},
+		map[string]any{
+			"role": "tool", "timestamp": "2026-08-10T00:00:03Z",
+			"blocks": []any{map[string]any{
+				"kind": "tool_result", "call_id": "native-call", "status": "success",
+				"mapping": map[string]any{"source_type": "custom_tool_call_output"},
+				"content": []any{map[string]any{
+					"kind": "text", "text": `[{"type":"input_text","text":"/tmp/project"}]`,
+				}},
+			}},
+		},
+		map[string]any{
+			"role": "system", "timestamp": "2026-08-10T00:00:04Z",
+			"blocks": []any{map[string]any{
+				"kind":    "context_compacted",
+				"mapping": map[string]any{"source_type": "context_compacted"},
+			}},
+		},
+	}))
+
+	result, importErr := Import(Request{
+		HandoffPath: handoffPath, Target: "codex", TargetCWD: cwd, Home: home, Execute: true,
+	})
+	if importErr != nil {
+		t.Fatal(importErr)
+	}
+	content, err := os.ReadFile(result.SessionPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var call map[string]any
+	var output map[string]any
+	compacted := false
+	for _, line := range strings.Split(string(content), "\n") {
+		var record map[string]any
+		if json.Unmarshal([]byte(line), &record) != nil {
+			continue
+		}
+		payload, _ := record["payload"].(map[string]any)
+		switch payload["type"] {
+		case "custom_tool_call":
+			call = payload
+		case "custom_tool_call_output":
+			output = payload
+		case "context_compacted":
+			compacted = record["type"] == "event_msg"
+		}
+	}
+	if call == nil || call["name"] != "exec" || call["namespace"] != nil ||
+		call["input"] != `const result = await tools.exec_command({cmd: "pwd"});` || call["id"] == nil {
+		t.Fatalf("native custom tool call was not restored: %+v", call)
+	}
+	metadata, _ := call["internal_chat_message_metadata_passthrough"].(map[string]any)
+	if metadata["turn_id"] == nil {
+		t.Fatalf("custom tool call is missing its turn metadata: %+v", call)
+	}
+	if output == nil || output["id"] == nil {
+		t.Fatal("native custom tool output was not restored")
+	}
+	if _, ok := output["output"].([]any); !ok {
+		t.Fatalf("custom tool output did not recover its structured value: %+v", output)
+	}
+	if !compacted {
+		t.Fatal("visible context compaction event was not restored")
+	}
+	parsed, err := relay.ParseSession(relay.SessionOptions{
+		Agent: relay.AgentCodex, SessionID: result.SessionID, CodexHome: home,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	foundMarker := false
+	for _, message := range parsed.Messages {
+		for _, block := range message.Blocks {
+			if block.Kind == "context_compacted" {
+				foundMarker = true
+			}
+		}
+	}
+	if !foundMarker {
+		t.Fatalf("imported session did not expose the context compaction marker: %+v", parsed.Messages)
 	}
 }
 
