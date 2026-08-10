@@ -98,7 +98,7 @@ URL fragment 不是身份认证。完整链接本身就是解密凭据，任何�
 
 公开 PUT 先由 Worker 向对应 Durable Object 发送没有正文的 `authorize` 请求。Durable Object 只检查请求头中的令牌、期限、长度、摘要和状态，并返回随机 R2 object key；密文正文不经过 Durable Object。Worker 把请求正文直接流式写入 R2，然后发送没有正文的 `complete` 请求。Durable Object 用 R2 `HEAD` 核对实际大小与 SHA-256，成功后把服务端状态改为 `ready`。桌面端核对成功响应后，才把本机记录改为 `active` 并删除上传令牌。
 
-客户端与服务端的云分享密文上限都是 32 MiB。服务端还限制有效期，并可配置上传令牌和请求频率。即使看不到明文，也不信任客户端声明的类型或大小。删除接口使用单独的随机撤销令牌；分享落地页不加载脚本，也不读取 fragment。
+桌面客户端与服务端的云分享密文上限都是 90 MiB。服务端还限制有效期，并可配置上传令牌和请求频率。即使看不到明文，也不信任客户端声明的类型或大小。删除接口使用单独的随机撤销令牌；分享落地页不读取 fragment 中的密钥。
 
 待上传记录会显示在分享记录页。上传中断后，本机仍有撤销和重试所需的凭据；相同令牌、长度和摘要可以安全重试。包仍在且长度、摘要未变时可以继续，包丢失或改变时只能撤销。转为 `active` 后，每条分享自己的上传令牌会从本机记录中删除。
 
@@ -143,7 +143,7 @@ Worker 给预留设置短期上传期限，默认 900 秒，并让 Durable Objec
 - 文件数量、单文件大小、总展开大小或压缩比超过限制的包。
 - 声明大小和实际读取大小不一致的条目。
 
-当前 Rust 限制为：明文 envelope 不超过 32 MiB，加密包不超过 32 MiB，payload 解码后合计不超过 20 MiB，单个所选文件不超过 5 MiB，所选 untracked 文件不超过 500 个。云端上传和下载也拒绝超过 32 MiB 的密文。程序使用有界读取和累计计数，不能只信任声明长度。
+当前 Rust 限制为：明文 envelope 不超过 256 MiB，加密包不超过 90 MiB，payload 解码后合计不超过 64 MiB，单个所选文件不超过 20 MiB，所选 untracked 文件不超过 500 个。云端上传和下载也拒绝超过 90 MiB 的密文。上传、下载和摘要检查使用流式读写；解密与 JSON 解析仍需要在本机内存中完成，因此继续保留明文上限。
 
 写文件时使用“新建且不得已存在”的方式。检查路径字符串后，还要逐级确认父目录不是 symlink。不能先检查再用普通路径覆盖，因为中间目录可能在检查后被替换。
 
@@ -198,11 +198,11 @@ Claude Code 导入成功后只返回参数数组 `claude --resume <新会话 ID>
 
 ChatGPT 导入完成后，Relay 先检查 `~/.codex/ipc` 目录和 `ipc.sock` 是否由当前用户拥有，拒绝连接可被其他用户写入的目录、非 socket 文件和所有者不符的 socket。检查通过后，Relay 以带长度前缀的 JSON 消息初始化连接，并发送 `query-cache-invalidate`，要求运行中的 ChatGPT 重新读取本机任务列表。消息不包含会话正文、工作目录、分享链接或凭据。
 
-刷新请求完成后，Relay 用不含本机路径和提示的 `codex://threads/new` 查询 macOS 注册的处理应用，再用 Security.framework 检查 bundle ID `com.openai.codex`、OpenAI Team ID、嵌套代码和所有架构。只有候选应用通过固定签名要求后，Relay 才打开 `codex://threads/<新任务 ID>`。没有通过验证的应用时，新任务仍保留在本机任务列表，但 Relay 不把打开请求交给该应用。
+刷新请求完成后，Relay 用不含本机路径、提示和任务 ID 的 `codex://threads/new` 查询 macOS 注册的处理应用，再用 Security.framework 检查 bundle ID `com.openai.codex`、OpenAI Team ID、嵌套代码和所有架构。只有候选应用通过固定签名要求后，Relay 才显示该应用。没有通过验证的应用时，新任务仍保留在本机任务列表，Relay 不会启动该应用。
 
-macOS 的完成回调只能证明打开请求已交给通过验证的 ChatGPT 应用。任务是否已写入本机历史，由导入后的会话文件、任务索引、SQLite 记录和置顶状态共同检查，不依赖打开回调。Relay 在刷新通知发出后等待很短时间，再发送任务链接；界面只说明已经发送打开请求，不把系统回调当作页面已经显示。若首次打开时任务仍未出现，用户可以重新检查并再次发送打开请求，不会重复导入或写入任务。`state_5.sqlite` 不存在时不会降级为只写 JSONL，用户需要先打开一次 ChatGPT，让应用建立本机任务数据库。
+macOS 的完成回调只能证明通过验证的 ChatGPT 应用已经显示。任务是否已写入本机历史，由导入后的会话文件、任务索引、SQLite 记录和置顶状态共同检查，不依赖应用启动回调。Relay 不发送 `codex://threads/<新任务 ID>`，接收者从 ChatGPT 左侧任务列表顶部打开新任务。`state_5.sqlite` 不存在时不会降级为只写 JSONL，用户需要先打开一次 ChatGPT，让应用建立本机任务数据库。
 
-置顶检查确认的是磁盘中的 `pinned-thread-ids`。如果 ChatGPT 没有运行，Relay 跳过本机刷新通知并发送经过签名检查的打开请求，ChatGPT 启动时会读取新任务。如果本机通信失败，任务导入结果仍然保留，界面会提示用户重新检查或重启 ChatGPT。
+置顶检查确认的是磁盘中的 `pinned-thread-ids`。如果 ChatGPT 没有运行，Relay 跳过本机刷新通知并启动经过签名检查的官方应用，ChatGPT 启动时会读取新任务。如果本机通信失败，任务导入结果仍然保留，界面会提示用户再次显示或重启 ChatGPT。
 
 ## 日志和诊断
 
@@ -217,6 +217,6 @@ macOS 的完成回调只能证明打开请求已交给通过验证的 ChatGPT �
 
 ## 仍需发行前确认
 
-包加密、HTTPS 密文分享、路径检查、Git 恢复和原生会话导入已经有实现与自动测试，但这不等于发行版已经通过安全检查。正式发布前仍需完成应用签名、公证、正式域名和安装包测试，并按 [v0.1-acceptance.md](v0.1-acceptance.md) 记录恶意输入、接近 32 MiB 的真实传输、ChatGPT 签名检查和 Claude Code 原生会话验证结果。
+包加密、HTTPS 密文分享、路径检查、Git 恢复和原生会话导入已经有实现与自动测试，但这不等于发行版已经通过安全检查。当前测试包使用 ad-hoc 签名，并已检查应用、内部程序和 DMG 的完整性；正式发布前仍需完成 Developer ID 签名、Apple 公证、正式域名和更多安装测试，并按 [v0.1-acceptance.md](v0.1-acceptance.md) 记录恶意输入、接近 90 MiB 的真实传输、ChatGPT 签名检查和 Claude Code 原生会话验证结果。
 
 当前明确保留的限制包括外部进程并发修改 `info/exclude` 时的路径级窗口。外部 `claude.ai` 或 ChatGPT 厂商网页分享链接也不能当作完整 Relay 包，而且这些厂商链接的导入目前尚未实现；当前支持范围见 [provider-share-links.md](provider-share-links.md)。

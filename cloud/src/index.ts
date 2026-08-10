@@ -24,7 +24,7 @@ export { RelayRateLimit, RelayShare };
 const SHARE_ID_PATTERN = /^[A-Za-z0-9_-]{32}$/u;
 const SHA256_INPUT_PATTERN = /^[A-Fa-f0-9]{64}$/u;
 const CREATE_BODY_LIMIT = 4096;
-const DEFAULT_MAX_BYTES = 32 * 1024 * 1024;
+const DEFAULT_MAX_BYTES = 90 * 1024 * 1024;
 const DEFAULT_TTL_SECONDS = 7 * 24 * 60 * 60;
 const DEFAULT_MIN_TTL_SECONDS = 60;
 const DEFAULT_MAX_TTL_SECONDS = 30 * 24 * 60 * 60;

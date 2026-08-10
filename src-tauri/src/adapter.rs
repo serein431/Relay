@@ -20,7 +20,7 @@ const EXPECTED_PROTOCOL: &str = "relay.adapter.v1";
 const MAX_ADAPTER_STDERR: usize = 128 * 1024;
 const MAX_HEALTH_STDOUT: usize = 1024 * 1024;
 const MAX_DISCOVERY_STDOUT: usize = 32 * 1024 * 1024;
-const MAX_EXPORT_STDOUT: usize = 64 * 1024 * 1024;
+const MAX_EXPORT_STDOUT: usize = 256 * 1024 * 1024;
 const HEALTH_TIMEOUT: Duration = Duration::from_secs(5);
 const DISCOVERY_TIMEOUT: Duration = Duration::from_secs(30);
 

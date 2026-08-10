@@ -6,7 +6,6 @@ use std::path::{Path, PathBuf};
 use url::Url;
 
 const CHATGPT_HANDLER_PROBE_URL: &str = "codex://threads/new";
-const CHATGPT_CATALOG_REFRESH_DELAY: std::time::Duration = std::time::Duration::from_millis(900);
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum CatalogRefreshStatus {
@@ -22,28 +21,17 @@ trait ChatGptHandlerVerifier {
     fn verify_handler(&self, application_path: &Path) -> Result<(), CommandError>;
 }
 
-trait ChatGptUrlOpener {
-    fn open_with_application(
-        &self,
-        application_path: &Path,
-        deep_link: &Url,
-    ) -> Result<(), CommandError>;
+trait ChatGptApplicationLauncher {
+    fn launch_application(&self, application_path: &Path) -> Result<(), CommandError>;
 }
 
-pub fn open_imported_task(session_id: &str) -> Result<(), CommandError> {
-    let session_id = validate_session_id(session_id)?;
-    open_imported_task_for_platform(session_id)
+pub fn show_task_list() -> Result<(), CommandError> {
+    show_task_list_for_platform()
 }
 
-pub fn refresh_and_open_imported_task(
-    session_id: &str,
-    codex_home: &Path,
-) -> Result<(), CommandError> {
-    match refresh_running_catalog(codex_home)? {
-        CatalogRefreshStatus::Sent => std::thread::sleep(CHATGPT_CATALOG_REFRESH_DELAY),
-        CatalogRefreshStatus::NotRunning => {}
-    }
-    open_imported_task(session_id)
+pub fn refresh_and_show_task_list(codex_home: &Path) -> Result<(), CommandError> {
+    refresh_running_catalog(codex_home)?;
+    show_task_list()
 }
 
 pub fn refresh_running_catalog(codex_home: &Path) -> Result<CatalogRefreshStatus, CommandError> {
@@ -65,31 +53,30 @@ fn refresh_running_catalog_for_platform(
 }
 
 #[cfg(target_os = "macos")]
-fn open_imported_task_for_platform(session_id: &str) -> Result<(), CommandError> {
+fn show_task_list_for_platform() -> Result<(), CommandError> {
     let registry = macos_chatgpt::MacChatGptRegistry;
     let verifier = macos_chatgpt::PinnedChatGptVerifier;
-    let opener = macos_chatgpt::MacChatGptOpener;
-    open_imported_task_with_services(session_id, &registry, &verifier, &opener)
+    let launcher = macos_chatgpt::MacChatGptLauncher;
+    show_task_list_with_services(&registry, &verifier, &launcher)
 }
 
 #[cfg(not(target_os = "macos"))]
-fn open_imported_task_for_platform(_session_id: &str) -> Result<(), CommandError> {
+fn show_task_list_for_platform() -> Result<(), CommandError> {
     Err(CommandError::new(
         "unsupported_platform",
-        "Relay can only open an imported ChatGPT task automatically on macOS",
+        "Relay can only show the ChatGPT task list automatically on macOS",
     ))
 }
 
-fn open_imported_task_with_services<R, V, O>(
-    session_id: &str,
+fn show_task_list_with_services<R, V, L>(
     registry: &R,
     verifier: &V,
-    opener: &O,
+    launcher: &L,
 ) -> Result<(), CommandError>
 where
     R: ChatGptHandlerRegistry,
     V: ChatGptHandlerVerifier,
-    O: ChatGptUrlOpener,
+    L: ChatGptApplicationLauncher,
 {
     let probe = Url::parse(CHATGPT_HANDLER_PROBE_URL).map_err(|_| {
         CommandError::new(
@@ -99,33 +86,7 @@ where
     })?;
     let handlers = registry.handlers_for_probe(&probe)?;
     let application_path = select_verified_handler(handlers, verifier)?;
-    let deep_link = imported_task_url(session_id)?;
-    opener.open_with_application(&application_path, &deep_link)
-}
-
-fn validate_session_id(session_id: &str) -> Result<&str, CommandError> {
-    let value = session_id.trim();
-    if value.is_empty()
-        || value.len() > 128
-        || !value
-            .bytes()
-            .all(|byte| byte.is_ascii_alphanumeric() || byte == b'-' || byte == b'_')
-    {
-        return Err(CommandError::new(
-            "invalid_session_id",
-            "the imported ChatGPT task id is invalid",
-        ));
-    }
-    Ok(value)
-}
-
-fn imported_task_url(session_id: &str) -> Result<Url, CommandError> {
-    Url::parse(&format!("codex://threads/{session_id}")).map_err(|_| {
-        CommandError::new(
-            "chatgpt_open_failed",
-            "cannot construct the imported ChatGPT task link",
-        )
-    })
+    launcher.launch_application(&application_path)
 }
 
 fn select_verified_handler<V>(handlers: Vec<PathBuf>, verifier: &V) -> Result<PathBuf, CommandError>
@@ -179,13 +140,13 @@ where
 #[cfg(target_os = "macos")]
 mod macos_chatgpt {
     use super::{
-        CatalogRefreshStatus, ChatGptHandlerRegistry, ChatGptHandlerVerifier, ChatGptUrlOpener,
-        CommandError, Path, PathBuf, Url,
+        CatalogRefreshStatus, ChatGptApplicationLauncher, ChatGptHandlerRegistry,
+        ChatGptHandlerVerifier, CommandError, Path, PathBuf, Url,
     };
     use block2::RcBlock;
     use core_foundation::url::CFURL;
     use objc2_app_kit::{NSRunningApplication, NSWorkspace, NSWorkspaceOpenConfiguration};
-    use objc2_foundation::{NSArray, NSError, NSString, NSURL};
+    use objc2_foundation::{NSError, NSString, NSURL};
     use security_framework::os::macos::code_signing::{Flags, SecRequirement, SecStaticCode};
     use serde_json::{json, Value};
     use std::fs;
@@ -208,7 +169,7 @@ mod macos_chatgpt {
 
     pub struct MacChatGptRegistry;
     pub struct PinnedChatGptVerifier;
-    pub struct MacChatGptOpener;
+    pub struct MacChatGptLauncher;
 
     pub fn refresh_running_catalog(
         codex_home: &Path,
@@ -419,43 +380,38 @@ mod macos_chatgpt {
         }
     }
 
-    impl ChatGptUrlOpener for MacChatGptOpener {
-        fn open_with_application(
-            &self,
-            application_path: &Path,
-            deep_link: &Url,
-        ) -> Result<(), CommandError> {
-            let deep_link = ns_url(deep_link, "ChatGPT task link")?;
+    impl ChatGptApplicationLauncher for MacChatGptLauncher {
+        fn launch_application(&self, application_path: &Path) -> Result<(), CommandError> {
             let application_path = NSString::from_str(&application_path.to_string_lossy());
             let application_url = NSURL::fileURLWithPath_isDirectory(&application_path, true);
-            let urls = NSArray::from_retained_slice(&[deep_link]);
             let configuration = NSWorkspaceOpenConfiguration::configuration();
+            configuration.setActivates(true);
+            configuration.setCreatesNewApplicationInstance(false);
+            configuration.setAllowsRunningApplicationSubstitution(true);
             let (sender, receiver) = mpsc::sync_channel(1);
             let completion: RcBlock<dyn Fn(*mut NSRunningApplication, *mut NSError)> = RcBlock::new(
                 move |application: *mut NSRunningApplication, error: *mut NSError| {
                     let _ = sender.try_send((!application.is_null(), error.is_null()));
                 },
             );
-            NSWorkspace::sharedWorkspace()
-                .openURLs_withApplicationAtURL_configuration_completionHandler(
-                    &urls,
-                    &application_url,
-                    &configuration,
-                    Some(&completion),
-                );
+            NSWorkspace::sharedWorkspace().openApplicationAtURL_configuration_completionHandler(
+                &application_url,
+                &configuration,
+                Some(&completion),
+            );
             match receiver.recv_timeout(OPEN_COMPLETION_TIMEOUT) {
                 Ok((true, true)) => Ok(()),
                 Ok(_) => Err(CommandError::new(
                     "chatgpt_open_failed",
-                    "macOS could not open the imported task with ChatGPT",
+                    "macOS could not open ChatGPT",
                 )),
                 Err(mpsc::RecvTimeoutError::Timeout) => Err(CommandError::new(
                     "chatgpt_open_failed",
-                    "macOS did not confirm the ChatGPT open request in time",
+                    "macOS did not confirm the ChatGPT launch request in time",
                 )),
                 Err(mpsc::RecvTimeoutError::Disconnected) => Err(CommandError::new(
                     "chatgpt_open_failed",
-                    "macOS ended the ChatGPT open request before reporting a result",
+                    "macOS ended the ChatGPT launch request before reporting a result",
                 )),
             }
         }
@@ -596,23 +552,19 @@ mod tests {
     }
 
     #[derive(Default)]
-    struct FakeOpener {
-        calls: RefCell<Vec<String>>,
+    struct FakeLauncher {
+        calls: RefCell<Vec<PathBuf>>,
     }
 
-    impl ChatGptUrlOpener for FakeOpener {
-        fn open_with_application(
-            &self,
-            _application_path: &Path,
-            deep_link: &Url,
-        ) -> Result<(), CommandError> {
-            self.calls.borrow_mut().push(deep_link.as_str().to_owned());
+    impl ChatGptApplicationLauncher for FakeLauncher {
+        fn launch_application(&self, application_path: &Path) -> Result<(), CommandError> {
+            self.calls.borrow_mut().push(application_path.to_path_buf());
             Ok(())
         }
     }
 
     #[test]
-    fn opens_the_exact_imported_task_with_a_verified_application() {
+    fn shows_the_verified_chatgpt_application_without_a_task_link() {
         let directory = tempfile::tempdir().unwrap();
         let application = directory.path().join("ChatGPT.app");
         fs::create_dir(&application).unwrap();
@@ -621,22 +573,13 @@ mod tests {
             handlers: vec![application.clone()],
         };
         let verifier = FakeVerifier {
-            trusted: HashSet::from([application]),
+            trusted: HashSet::from([application.clone()]),
         };
-        let opener = FakeOpener::default();
+        let launcher = FakeLauncher::default();
 
-        open_imported_task_with_services(
-            "01912345-6789-7abc-8def-0123456789ab",
-            &registry,
-            &verifier,
-            &opener,
-        )
-        .unwrap();
+        show_task_list_with_services(&registry, &verifier, &launcher).unwrap();
 
-        assert_eq!(
-            opener.calls.borrow().as_slice(),
-            ["codex://threads/01912345-6789-7abc-8def-0123456789ab"]
-        );
+        assert_eq!(launcher.calls.borrow().as_slice(), [application]);
     }
 
     #[test]
@@ -647,11 +590,10 @@ mod tests {
         let registry = FakeRegistry {
             handlers: vec![application],
         };
-        let error = open_imported_task_with_services(
-            "01912345-6789-7abc-8def-0123456789ab",
+        let error = show_task_list_with_services(
             &registry,
             &FakeVerifier::default(),
-            &FakeOpener::default(),
+            &FakeLauncher::default(),
         )
         .unwrap_err();
         assert_eq!(error.code, "chatgpt_identity_unverified");

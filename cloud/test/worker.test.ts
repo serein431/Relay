@@ -40,7 +40,7 @@ function makeMiniflare(bindingOverrides: Record<string, string> = {}): Miniflare
       ALLOWED_ORIGINS: allowedOrigin,
       UPLOAD_TOKEN: "test-service-upload-token",
       RATE_LIMIT_SALT: "test-only-rate-limit-salt",
-      MAX_CIPHERTEXT_BYTES: "33554432",
+      MAX_CIPHERTEXT_BYTES: "94371840",
       DEFAULT_TTL_SECONDS: "604800",
       MIN_TTL_SECONDS: "1",
       MAX_TTL_SECONDS: "2592000",
@@ -59,6 +59,26 @@ afterEach(async () => {
 });
 
 describe("Relay share Worker", () => {
+  it("rejects reservations above the 90 MiB service limit", async () => {
+    const body = JSON.stringify({
+      ciphertext_bytes: 90 * 1024 * 1024 + 1,
+      ciphertext_sha256: "a".repeat(64),
+    });
+    const response = await miniflare.dispatchFetch("https://share.example.test/v1/shares", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "Content-Length": String(Buffer.byteLength(body)),
+        Authorization: "Bearer test-service-upload-token",
+        Origin: allowedOrigin,
+        "CF-Connecting-IP": "203.0.113.10",
+      },
+      body,
+    });
+    expect(response.status).toBe(400);
+    expect(await response.json()).toMatchObject({ error: { code: "invalid_ciphertext_size" } });
+  });
+
   it("reserves, uploads, describes, and downloads an encrypted blob", async () => {
     const ciphertext = new TextEncoder().encode("opaque encrypted relay package");
     const reservedAfter = Date.now();

@@ -54,12 +54,15 @@ Relay 会自动连接内置的分享服务。普通用户不需要填写服务�
 ### 在本机继续处理
 
 1. 在 Relay 的“接收”页面粘贴分享链接，或选择已经下载的分享文件。
-2. 验证内容，选择现有项目和接收位置。
-3. 点击“导入到 ChatGPT”或“导入到 Claude Code”。
+2. 验证内容。如果分享包含 Git 改动，选择发送者使用的同一个 Git 项目；如果本机还没有，先从同一个远程仓库运行 `git clone`。
+3. 选择新工作目录的保存位置。
+4. 点击“导入到 ChatGPT”或“导入到 Claude Code”。
+
+分享包中的 Git 内容不是完整项目副本，而是发送者相对原项目产生的提交、暂存、未暂存和所选新文件。Relay 会检查接收方选择的仓库是否来自同一个远程项目，然后另建工作目录并恢复这些改动；所选仓库本身不会被修改。
 
 Relay 会先恢复代码或保存附件，再创建一条新的本机会话。导入的是发送者允许分享的消息、项目说明和历史工具记录；已有任务不会被覆盖，历史工具也不会再次执行。
 
-ChatGPT 导入成功后会直接打开新任务。Claude Code 导入成功后会显示会话 ID 和可复制的 `claude --resume <会话 ID>` 命令。
+ChatGPT 导入成功后，新任务会出现在任务列表顶部。Relay 会显示 ChatGPT，接收者从任务列表打开新任务。Claude Code 导入成功后会显示会话 ID 和可复制的 `claude --resume <会话 ID>` 命令。
 
 分享文件中仍保留一份可读说明和结构化记录，供浏览器查看或导入失败时备用。正常使用不需要手工打开这些文件。
 
@@ -83,6 +86,12 @@ ChatGPT 导入成功后会直接打开新任务。Claude Code 导入成功后会
 
 可以。Relay 会自动取消 Git 内容，只分享会话和项目说明。接收时会创建普通文件夹，并仍然可以导入为新的 ChatGPT 任务或 Claude Code 会话。
 
+### 接收 Git 改动前为什么要有同一个仓库
+
+因为 Relay 分享的是相对原项目产生的改动，不是把整个项目重新上传一遍。接收方需要选择从同一个远程仓库克隆出的本机项目，Relay 才能确定这些改动应该应用到哪份代码上。
+
+如果本机还没有这个项目，请先运行 `git clone <仓库地址>`。Relay 随后会另建工作目录和分支，不会修改原来的工作目录。
+
 ### 分享链接有访问密码吗
 
 分享链接包含查看权限。任何拿到链接的人都可能读取内容。请只把链接发送给需要查看的人，并在不再需要时撤销分享。
@@ -96,18 +105,18 @@ Relay 目前面向 macOS，处于早期版本。
 - 已支持加密分享包、本机导入和 HTTPS 分享链接。
 - 已支持接收者在浏览器中查看聊天记录和项目说明。
 - 已支持把分享内容导入为新的 ChatGPT 任务或 Claude Code 会话。
-- ChatGPT 自动打开功能要求安装通过签名检查的官方 ChatGPT 应用。
-- 线上分享服务已经部署。自定义域名、应用签名、公证和发布版安装测试仍需在公开发行前完成。
+- Relay 显示 ChatGPT 时会检查应用签名，只接受官方 ChatGPT 应用。
+- 线上分享服务已经部署。自定义域名、Developer ID 签名和 Apple 公证仍未完成。
 
 不要把当前早期版本用于无人检查的敏感代码分享。
 
-ChatGPT 运行时可能保留旧的任务列表。Relay 完成写入检查后，会通知正在运行的 ChatGPT 重新读取本机任务，再发送打开请求。界面中的“已发送打开请求”只表示请求已经交给 ChatGPT，不表示任务页面已经显示。如果任务仍未出现，请返回 Relay 点击“重新检查并打开”；这不会重复导入，也不会创建第二条任务。
+ChatGPT 运行时可能保留旧的任务列表。Relay 完成写入检查后，会通知正在运行的 ChatGPT 重新读取本机任务，并把新任务设为置顶。Relay 只显示 ChatGPT 主窗口，不直接跳入新任务，因为 ChatGPT 的任务链接可能在会话恢复完成前显示错误提醒。请从左侧任务列表顶部打开导入的任务。如果任务没有出现，请点击“显示 ChatGPT 任务列表”或重新启动 ChatGPT；这不会重复导入，也不会创建第二条任务。
 
 ## 下载
 
 [下载 Relay v0.1.0（macOS Apple Silicon）](https://github.com/serein431/Relay/releases/tag/v0.1.0)
 
-当前 DMG 尚未签名和公证，只建议用于测试。如果 macOS 阻止打开，请先确认文件来自本仓库，再到“系统设置 → 隐私与安全性”中允许本次打开。
+当前 DMG 使用 ad-hoc 签名，应用和内部程序的签名结构已经过检查，但没有 Developer ID 签名和 Apple 公证。陌生 Mac 仍可能提示无法验证开发者；请先确认文件来自本仓库，再到“系统设置 → 隐私与安全性”中允许本次打开。
 
 ## 安全说明
 
@@ -148,11 +157,13 @@ pnpm check
 pnpm desktop:dev
 ```
 
-构建当前机器架构的 `.app` 和 DMG：
+构建当前机器架构的本地测试 `.app` 和 DMG：
 
 ```bash
 pnpm desktop:build:local
 ```
+
+本地测试包使用 ad-hoc 签名，签名结构完整，但没有 Apple 开发者身份和公证，只能用于本机测试，不能作为公开 Release。正式发布使用 `pnpm desktop:build`，并由构建环境提供 Developer ID 与 Apple 公证凭据。
 
 检查构建结果：
 
@@ -160,6 +171,15 @@ pnpm desktop:build:local
 pnpm desktop:verify src-tauri/target/release/bundle/macos/Relay.app
 pnpm desktop:verify src-tauri/target/release/bundle/dmg/Relay_0.1.0_aarch64.dmg
 ```
+
+正式发布前必须运行更严格的检查：
+
+```bash
+pnpm desktop:verify:release src-tauri/target/release/bundle/macos/Relay.app
+pnpm desktop:verify:release src-tauri/target/release/bundle/dmg/Relay_0.1.0_aarch64.dmg
+```
+
+该检查要求 Developer ID Application 签名、有效 Team ID、Gatekeeper 验证和 app 公证票据，任何一项缺失都会停止发布。
 
 只运行前端界面：
 

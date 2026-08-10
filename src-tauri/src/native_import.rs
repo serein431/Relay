@@ -7,7 +7,6 @@ use serde_json::json;
 use std::ffi::OsString;
 use std::fs;
 use std::path::{Path, PathBuf};
-use std::thread;
 use std::time::Duration;
 
 const IMPORTER_ENV: &str = "RELAY_SESSION_IMPORTER";
@@ -15,7 +14,6 @@ const IMPORT_TIMEOUT: Duration = Duration::from_secs(300);
 const MAX_IMPORTER_STDOUT: usize = 2 * 1024 * 1024;
 const MAX_IMPORTER_STDERR: usize = 128 * 1024;
 const MAX_HANDOFF_BYTES: u64 = 1024 * 1024 * 1024;
-const CHATGPT_CATALOG_SETTLE_DELAY: Duration = Duration::from_millis(900);
 
 #[derive(Debug, Deserialize)]
 struct ImporterResponse {
@@ -171,7 +169,6 @@ pub fn import_native_session(
                 result.catalog_refresh_status = "sent".into();
                 result.catalog_refresh_error_code = None;
                 result.catalog_refresh_error = None;
-                thread::sleep(CHATGPT_CATALOG_SETTLE_DELAY);
             }
             Ok(crate::chatgpt::CatalogRefreshStatus::NotRunning) => {
                 result.catalog_refresh_status = "not_running".into();
@@ -184,9 +181,9 @@ pub fn import_native_session(
                 result.catalog_refresh_error = Some(error.message);
             }
         }
-        match crate::chatgpt::open_imported_task(&result.session_id) {
+        match crate::chatgpt::show_task_list() {
             Ok(()) => {
-                result.open_status = "requested".into();
+                result.open_status = "ready".into();
                 result.open_error_code = None;
                 result.open_error = None;
             }

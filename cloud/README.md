@@ -41,7 +41,7 @@ Content-Type: application/json
 }
 ```
 
-`expires_in_seconds` 可省略。`ciphertext_bytes` 受服务端 32 MiB 上限约束。服务返回 `share_id`、`share_url`、`upload_url`、`metadata_url`、`expires_at`、`upload_expires_at`，以及这条分享独有的 `upload_token` 和 `revoke_token`。预留时 Durable Object 状态为 `awaiting_upload`，R2 中还没有密文。
+`expires_in_seconds` 可省略。`ciphertext_bytes` 受服务端 90 MiB 上限约束。服务返回 `share_id`、`share_url`、`upload_url`、`metadata_url`、`expires_at`、`upload_expires_at`，以及这条分享独有的 `upload_token` 和 `revoke_token`。预留时 Durable Object 状态为 `awaiting_upload`，R2 中还没有密文。
 
 桌面端必须先把 `pending_upload` 记录写入本机。记录包含上传令牌、撤销令牌、包路径、密文长度和 SHA-256；文件与目录同步完成后，才能上传密文：
 
@@ -160,4 +160,4 @@ npm run dev
 - 示例配置关闭 Worker observability。若正式环境需要指标，只记录状态码、耗时、字节数和错误码，不记录完整 URL、请求头或响应令牌。
 - R2 中不写 custom metadata；对象 key 与公开 share ID 无关。
 - 限流使用加盐的来源地址哈希，不把原始 IP 写入 Durable Object。它只是基础防护，公开部署仍应在 Cloudflare 上设置请求大小规则、DDoS/WAF 规则和费用告警。
-- Worker 入站请求上限、R2 配额和套餐限制仍以 Cloudflare 当前规则为准。部署前应在 staging 做接近 32 MiB 的真实上传，不以单元测试代替线上流式验证。
+- Worker 入站请求上限、R2 配额和套餐限制仍以 Cloudflare 当前规则为准。部署前应在 staging 做接近 90 MiB 的真实上传，不以单元测试代替线上流式验证。

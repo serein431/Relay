@@ -36,16 +36,17 @@ const HANDOFF_SCHEMA: &str = "relay.handoff.v1";
 const ADAPTER_PREVIEW_SCHEMA: &str = "relay.adapter.handoff-preview.v1";
 const NONCE_LENGTH: usize = 12;
 const KEY_LENGTH: usize = 32;
-const MAX_PLAINTEXT_BYTES: usize = 32 * 1024 * 1024;
-const MAX_CIPHERTEXT_BYTES: usize = 32 * 1024 * 1024;
-const MAX_PAYLOAD_BYTES: usize = 20 * 1024 * 1024;
-const MAX_SINGLE_FILE_BYTES: u64 = 5 * 1024 * 1024;
+const MAX_PLAINTEXT_BYTES: usize = 256 * 1024 * 1024;
+const MAX_CIPHERTEXT_BYTES: usize = 90 * 1024 * 1024;
+const MAX_PAYLOAD_BYTES: usize = 64 * 1024 * 1024;
+const MAX_SINGLE_FILE_BYTES: u64 = 20 * 1024 * 1024;
 const MAX_UNTRACKED_FILES: usize = 500;
 const MAX_GIT_OUTPUT: usize = 24 * 1024 * 1024;
 const MAX_GIT_STDERR: usize = 256 * 1024;
 const GIT_TIMEOUT: Duration = Duration::from_secs(30);
 const HANDOFF_ID_BYTES: usize = 32;
 const HANDOFF_DIRECTORY_ATTEMPTS: usize = 16;
+const RESTORE_NAME_ATTEMPTS: usize = 10_000;
 const MAX_GIT_EXCLUDE_BYTES: usize = 4 * 1024 * 1024;
 
 #[cfg(windows)]
@@ -843,7 +844,7 @@ fn validate_payload_metadata(payload: &PackagePayload) -> Result<(), CommandErro
             if payload.byte_length > MAX_SINGLE_FILE_BYTES {
                 return Err(CommandError::new(
                     "relaypack_too_large",
-                    format!("untracked payload '{}' exceeds 5 MiB", payload.asset_id),
+                    format!("untracked payload '{}' exceeds 20 MiB", payload.asset_id),
                 ));
             }
             if !matches!(payload.mode.as_deref(), Some("100644" | "100755")) {
@@ -4307,6 +4308,12 @@ struct OwnedHandoffDirectory {
 }
 
 #[derive(Debug)]
+struct ReservedDirectory {
+    path: PathBuf,
+    identity: FilesystemIdentity,
+}
+
+#[derive(Debug)]
 struct GitExcludeSnapshot {
     bytes: Vec<u8>,
     identity: FilesystemIdentity,
@@ -4361,7 +4368,7 @@ fn restore_loaded_relaypack(
                 "a receiver Git repository is required for a package that contains Git changes",
             )
         })?;
-    let branch_name = request
+    let requested_branch_name = request
         .branch_name
         .as_deref()
         .filter(|value| !value.trim().is_empty())
@@ -4404,10 +4411,10 @@ fn restore_loaded_relaypack(
         &repository_inspection.remotes,
         material.remote_fingerprint.as_deref(),
     )?;
-    validate_branch_name(&repository, &branch_name)?;
-    ensure_branch_absent(&repository, &branch_name)?;
-    let target = validate_new_directory_path(&request.target_path, "target worktree")?;
-    if target == repository || target.starts_with(&repository) {
+    validate_branch_name(&repository, &requested_branch_name)?;
+    let branch_name = available_branch_name(&repository, &requested_branch_name)?;
+    let target_base = validate_new_directory_base(&request.target_path, "target worktree")?;
+    if target_base == repository || target_base.starts_with(&repository) {
         // A nested worktree can be valid in Git, but it makes cleanup and
         // symlink boundaries needlessly risky for a received package.
         return Err(CommandError::new(
@@ -4415,7 +4422,6 @@ fn restore_loaded_relaypack(
             "target_path must be outside the receiver repository",
         ));
     }
-
     let materialized = materialize_restore_payloads(&material)?;
     preflight_restore(
         &repository,
@@ -4423,6 +4429,8 @@ fn restore_loaded_relaypack(
         &materialized,
         &loaded.envelope.handoff,
     )?;
+    let target_reservation = reserve_available_directory(&target_base, "target worktree")?;
+    let target = target_reservation.path.clone();
 
     let mut created_branch_oid = None;
     let mut handoff_installation = None;
@@ -4469,6 +4477,7 @@ fn restore_loaded_relaypack(
             &branch_name,
             created_branch_oid.as_deref(),
             handoff_installation.as_ref(),
+            Some(&target_reservation),
         );
         return Err(with_failed_restore_cleanup(error, cleanup));
     }
@@ -4506,9 +4515,15 @@ fn restore_conversation_only_relaypack(
     request: RestoreRelaypackRequest,
 ) -> Result<RestoreRelaypackResult, CommandError> {
     let handoff_markdown = handoff_markdown_payload(&loaded.envelope)?;
-    let target = validate_new_directory_path(&request.target_path, "handoff folder")?;
-    let handoff_directory =
-        install_plain_handoff_directory(&target, &handoff_markdown, &loaded.envelope.handoff)?.path;
+    let target_base = validate_new_directory_base(&request.target_path, "handoff folder")?;
+    let target_reservation = reserve_available_directory(&target_base, "handoff folder")?;
+    let target = target_reservation.path.clone();
+    let handoff_directory = install_plain_handoff_directory(
+        target_reservation,
+        &handoff_markdown,
+        &loaded.envelope.handoff,
+    )?
+    .path;
 
     Ok(RestoreRelaypackResult {
         worktree_path: target.to_string_lossy().into_owned(),
@@ -5031,44 +5046,23 @@ fn install_handoff_directory(
 }
 
 fn install_plain_handoff_directory(
-    target: &Path,
+    reserved: ReservedDirectory,
     markdown: &[u8],
     handoff: &Value,
 ) -> Result<OwnedHandoffDirectory, CommandError> {
-    let handoff_json = serde_json::to_vec_pretty(handoff).map_err(|error| {
-        CommandError::new(
-            "handoff_write_failed",
-            format!("cannot encode handoff.json: {error}"),
-        )
-    })?;
-    fs::create_dir(target).map_err(|error| {
-        CommandError::new(
-            "handoff_write_failed",
-            format!(
-                "cannot create handoff folder '{}': {error}",
-                target.display()
-            ),
-        )
-    })?;
-    let metadata = fs::symlink_metadata(target).map_err(|error| {
-        CommandError::new(
-            "handoff_write_failed",
-            format!("cannot inspect new handoff folder: {error}"),
-        )
-    })?;
-    if metadata.file_type().is_symlink() || !metadata.is_dir() {
-        return Err(CommandError::new(
-            "handoff_write_failed",
-            "new handoff path is not an ordinary directory",
-        ));
-    }
     let mut owned = OwnedHandoffDirectory {
-        path: target.to_path_buf(),
-        identity: filesystem_identity(&metadata, target)?,
+        path: reserved.path,
+        identity: reserved.identity,
         markdown: None,
         json: None,
     };
     let install_result = (|| {
+        let handoff_json = serde_json::to_vec_pretty(handoff).map_err(|error| {
+            CommandError::new(
+                "handoff_write_failed",
+                format!("cannot encode handoff.json: {error}"),
+            )
+        })?;
         owned.markdown = Some(write_new_regular_file(
             &owned.path.join("HANDOFF.md"),
             markdown,
@@ -5822,6 +5816,7 @@ fn cleanup_failed_restore(
     branch: &str,
     created_branch_oid: Option<&str>,
     handoff: Option<&HandoffInstallation>,
+    reservation: Option<&ReservedDirectory>,
 ) -> FailedRestoreCleanup {
     let mut cleanup = FailedRestoreCleanup::default();
     if let Some(handoff) = handoff {
@@ -5833,6 +5828,9 @@ fn cleanup_failed_restore(
     }
 
     if created_branch_oid.is_none() {
+        if let Some(reservation) = reservation {
+            cleanup_reserved_directory(reservation);
+        }
         return cleanup;
     }
     cleanup.preserve_worktree(
@@ -7292,8 +7290,13 @@ mod tests {
         run_git(&receiver, &["add", "base.txt"]);
         run_git(&receiver, &["commit", "-m", "base"]);
 
-        let plaintext = vec![b' '; MAX_PLAINTEXT_BYTES + 1];
-        let compressed = zstd::stream::encode_all(Cursor::new(plaintext), 3).unwrap();
+        let mut encoder = zstd::stream::Encoder::new(Vec::new(), 3).unwrap();
+        std::io::copy(
+            &mut std::io::repeat(b' ').take((MAX_PLAINTEXT_BYTES + 1) as u64),
+            &mut encoder,
+        )
+        .unwrap();
+        let compressed = encoder.finish().unwrap();
         let package = temp.path().join("compression-bomb.relaypack");
         let key = write_encrypted_test_bytes(&package, &compressed);
         assert_package_rejected_before_worktree(
@@ -7542,6 +7545,7 @@ mod tests {
             "relay/handoff-test",
             Some(&expected_oid),
             Some(&installation),
+            None,
         );
         assert!(cleanup.incomplete);
         assert_eq!(fs::read(&exclude_path).unwrap(), original_exclude);
@@ -7579,6 +7583,7 @@ mod tests {
             branch,
             Some(&expected_oid),
             None,
+            None,
         );
 
         assert!(cleanup.incomplete);
@@ -7611,6 +7616,7 @@ mod tests {
             &target,
             branch,
             Some(&expected_oid),
+            None,
             None,
         );
 
@@ -7686,6 +7692,7 @@ mod tests {
             branch,
             Some(&expected_oid),
             None,
+            None,
         );
 
         assert!(cleanup.incomplete);
@@ -7728,6 +7735,7 @@ mod tests {
             branch,
             Some(&expected_oid),
             Some(&installation),
+            None,
         );
 
         assert!(cleanup.incomplete);
@@ -7854,15 +7862,57 @@ mod tests {
 
         let existing_target = temp.path().join("existing-handoff");
         fs::create_dir(&existing_target).unwrap();
-        let error = restore_relaypack(RestoreRelaypackRequest {
-            package_path,
-            key: package_key,
+        let repeated = restore_relaypack(RestoreRelaypackRequest {
+            package_path: package_path.clone(),
+            key: package_key.clone(),
             repository_path: None,
             target_path: existing_target.to_string_lossy().into_owned(),
             branch_name: None,
         })
-        .unwrap_err();
-        assert_eq!(error.code, "target_exists");
+        .unwrap();
+        assert_eq!(
+            fs::canonicalize(&repeated.worktree_path).unwrap(),
+            fs::canonicalize(temp.path().join("existing-handoff-2")).unwrap()
+        );
+        assert_eq!(fs::read_dir(&existing_target).unwrap().count(), 0);
+
+        let file_target = temp.path().join("file-conflict");
+        fs::write(&file_target, b"keep me").unwrap();
+        let file_repeated = restore_relaypack(RestoreRelaypackRequest {
+            package_path,
+            key: package_key,
+            repository_path: None,
+            target_path: file_target.to_string_lossy().into_owned(),
+            branch_name: None,
+        })
+        .unwrap();
+        assert_eq!(
+            fs::canonicalize(&file_repeated.worktree_path).unwrap(),
+            fs::canonicalize(temp.path().join("file-conflict-2")).unwrap()
+        );
+        assert_eq!(fs::read(&file_target).unwrap(), b"keep me");
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn restore_name_skips_a_symlink_without_touching_its_target() {
+        use std::os::unix::fs::symlink;
+
+        let temp = tempfile::tempdir().unwrap();
+        let outside = temp.path().join("outside");
+        fs::create_dir(&outside).unwrap();
+        fs::write(outside.join("user.txt"), b"keep me").unwrap();
+        let requested = temp.path().join("received");
+        symlink(&outside, &requested).unwrap();
+
+        let reserved = reserve_available_directory(&requested, "handoff folder").unwrap();
+        assert_eq!(reserved.path, temp.path().join("received-2"));
+        assert_eq!(fs::read(outside.join("user.txt")).unwrap(), b"keep me");
+        assert!(fs::symlink_metadata(&requested)
+            .unwrap()
+            .file_type()
+            .is_symlink());
+        cleanup_reserved_directory(&reserved);
     }
 
     #[cfg(unix)]
@@ -8372,15 +8422,23 @@ mod tests {
 
         let existing_target = temp.path().join("already-exists");
         fs::create_dir(&existing_target).unwrap();
-        let error = restore_relaypack(RestoreRelaypackRequest {
+        run_git(&receiver, &["branch", "relay/duplicate", "HEAD"]);
+        let repeated = restore_relaypack(RestoreRelaypackRequest {
             package_path: result.package_path,
             key: result.key_fragment,
             repository_path: Some(receiver.to_string_lossy().into_owned()),
             target_path: existing_target.to_string_lossy().into_owned(),
-            branch_name: Some("relay/unused".into()),
+            branch_name: Some("relay/duplicate".into()),
         })
-        .unwrap_err();
-        assert_eq!(error.code, "target_exists");
+        .unwrap();
+        assert_eq!(repeated.branch_name.as_deref(), Some("relay/duplicate-2"));
+        assert_eq!(
+            fs::canonicalize(&repeated.worktree_path).unwrap(),
+            fs::canonicalize(temp.path().join("already-exists-2")).unwrap()
+        );
+        assert!(branch_exists(&receiver, "relay/duplicate"));
+        assert!(branch_exists(&receiver, "relay/duplicate-2"));
+        assert_eq!(fs::read_dir(&existing_target).unwrap().count(), 0);
     }
 
     #[test]
@@ -8580,7 +8638,7 @@ fn validate_branch_name(repository: &Path, branch: &str) -> Result<(), CommandEr
     Ok(())
 }
 
-fn ensure_branch_absent(repository: &Path, branch: &str) -> Result<(), CommandError> {
+fn branch_exists(repository: &Path, branch: &str) -> Result<bool, CommandError> {
     let mut args = safe_git_prefix();
     args.extend([
         OsString::from("show-ref"),
@@ -8590,16 +8648,31 @@ fn ensure_branch_absent(repository: &Path, branch: &str) -> Result<(), CommandEr
     ]);
     let output = git_raw_os(repository, &args, true, 1024 * 1024)?;
     match output.status.code() {
-        Some(0) => Err(CommandError::new(
-            "branch_exists",
-            format!("branch '{branch}' already exists"),
-        )),
-        Some(1) => Ok(()),
+        Some(0) => Ok(true),
+        Some(1) => Ok(false),
         _ => Err(git_output_error(&args, &output)),
     }
 }
 
-fn validate_new_directory_path(raw: &str, label: &str) -> Result<PathBuf, CommandError> {
+fn available_branch_name(repository: &Path, requested: &str) -> Result<String, CommandError> {
+    for index in 1..=RESTORE_NAME_ATTEMPTS {
+        let candidate = if index == 1 {
+            requested.to_owned()
+        } else {
+            format!("{requested}-{index}")
+        };
+        validate_branch_name(repository, &candidate)?;
+        if !branch_exists(repository, &candidate)? {
+            return Ok(candidate);
+        }
+    }
+    Err(CommandError::new(
+        "branch_name_unavailable",
+        "cannot find an unused branch name for this Relay package",
+    ))
+}
+
+fn validate_new_directory_base(raw: &str, label: &str) -> Result<PathBuf, CommandError> {
     if raw.trim().is_empty() {
         return Err(CommandError::new(
             "invalid_target_path",
@@ -8617,18 +8690,78 @@ fn validate_new_directory_path(raw: &str, label: &str) -> Result<PathBuf, Comman
         path.parent().unwrap_or_else(|| Path::new(".")),
         &format!("{label} parent"),
     )?;
-    let candidate = parent.join(name);
-    match fs::symlink_metadata(&candidate) {
-        Ok(_) => Err(CommandError::new(
-            "target_exists",
-            format!("{label} '{}' already exists", candidate.display()),
-        )),
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(candidate),
-        Err(error) => Err(CommandError::new(
+    Ok(parent.join(name))
+}
+
+fn reserve_available_directory(
+    base: &Path,
+    label: &str,
+) -> Result<ReservedDirectory, CommandError> {
+    let parent = base.parent().ok_or_else(|| {
+        CommandError::new(
             "invalid_target_path",
-            format!("cannot inspect {label} path: {error}"),
-        )),
+            format!("{label} path must have a parent directory"),
+        )
+    })?;
+    let name = base.file_name().ok_or_else(|| {
+        CommandError::new(
+            "invalid_target_path",
+            format!("{label} path must have a final directory name"),
+        )
+    })?;
+    for index in 1..=RESTORE_NAME_ATTEMPTS {
+        let candidate = if index == 1 {
+            base.to_path_buf()
+        } else {
+            let mut suffixed = name.to_os_string();
+            suffixed.push(format!("-{index}"));
+            parent.join(suffixed)
+        };
+        match fs::create_dir(&candidate) {
+            Ok(()) => {
+                let metadata = fs::symlink_metadata(&candidate).map_err(|error| {
+                    CommandError::new(
+                        "restore_directory_failed",
+                        format!("cannot inspect new {label}: {error}"),
+                    )
+                })?;
+                if metadata.file_type().is_symlink() || !metadata.is_dir() {
+                    return Err(CommandError::new(
+                        "restore_directory_failed",
+                        format!("new {label} is not an ordinary directory"),
+                    ));
+                }
+                return Ok(ReservedDirectory {
+                    path: candidate.clone(),
+                    identity: filesystem_identity(&metadata, &candidate)?,
+                });
+            }
+            Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => continue,
+            Err(error) => {
+                return Err(CommandError::new(
+                    "restore_directory_failed",
+                    format!("cannot create {label} '{}': {error}", candidate.display()),
+                ))
+            }
+        }
     }
+    Err(CommandError::new(
+        "target_name_unavailable",
+        format!("cannot find an unused name for {label}"),
+    ))
+}
+
+fn cleanup_reserved_directory(reserved: &ReservedDirectory) {
+    let Ok(metadata) = fs::symlink_metadata(&reserved.path) else {
+        return;
+    };
+    if metadata.file_type().is_symlink()
+        || !metadata.is_dir()
+        || !filesystem_identity_matches(&metadata, &reserved.path, &reserved.identity)
+    {
+        return;
+    }
+    let _ = fs::remove_dir(&reserved.path);
 }
 
 fn ensure_commit_exists(repository: &Path, commit: &str) -> Result<(), CommandError> {

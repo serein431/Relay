@@ -310,8 +310,8 @@ export async function importNativeSession(
   return invoke<ImportNativeSessionResult>("import_native_session", { request });
 }
 
-export async function openImportedChatgptTask(sessionId: string): Promise<void> {
-  return invoke<void>("open_imported_chatgpt_task", { sessionId });
+export async function showChatgptTasks(): Promise<void> {
+  return invoke<void>("show_chatgpt_tasks");
 }
 
 export async function uploadShare(request: UploadShareRequest): Promise<UploadShareResult> {

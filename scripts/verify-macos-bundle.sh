@@ -4,6 +4,7 @@ set -euo pipefail
 script_dir="$(cd "$(dirname "$0")" && pwd)"
 project_dir="$(cd "$script_dir/.." && pwd)"
 artifact_path="${1:-$project_dir/src-tauri/target/release/bundle/macos/Relay.app}"
+require_distribution_signature="${RELAY_REQUIRE_DISTRIBUTION_SIGNATURE:-0}"
 
 if [[ ! -e "$artifact_path" && -d "$project_dir/src-tauri/target/debug/bundle/macos/Relay.app" ]]; then
   artifact_path="$project_dir/src-tauri/target/debug/bundle/macos/Relay.app"
@@ -19,6 +20,31 @@ verify_app() {
   [[ -x "$main_binary" ]] || { printf 'Relay main executable is missing: %s\n' "$main_binary" >&2; exit 1; }
   [[ -x "$adapter_binary" ]] || { printf 'Bundled Relay Adapter is missing or not executable: %s\n' "$adapter_binary" >&2; exit 1; }
   [[ -x "$importer_binary" ]] || { printf 'Bundled Relay Session Importer is missing or not executable: %s\n' "$importer_binary" >&2; exit 1; }
+
+  codesign --verify --deep --strict --verbose=2 "$app_path"
+  local signature_details
+  signature_details="$(codesign -dv --verbose=4 "$app_path" 2>&1)"
+  grep -Fq 'Identifier=build.relay.desktop' <<<"$signature_details" || {
+    printf 'Relay has an unexpected signing identifier: %s\n' "$app_path" >&2
+    exit 1
+  }
+  grep -Fq 'Sealed Resources version=2' <<<"$signature_details" || {
+    printf 'Relay resources are not covered by its code signature: %s\n' "$app_path" >&2
+    exit 1
+  }
+
+  if [[ "$require_distribution_signature" == "1" ]]; then
+    grep -Eq '^Authority=Developer ID Application:' <<<"$signature_details" || {
+      printf 'Relay is not signed with a Developer ID Application certificate: %s\n' "$app_path" >&2
+      exit 1
+    }
+    grep -Eq '^TeamIdentifier=[A-Z0-9]{10}$' <<<"$signature_details" || {
+      printf 'Relay does not contain a valid Apple Developer Team ID: %s\n' "$app_path" >&2
+      exit 1
+    }
+    spctl --assess --type execute --verbose=4 "$app_path"
+    xcrun stapler validate "$app_path"
+  fi
 
   local main_arches
   local adapter_arches
@@ -87,4 +113,8 @@ hdiutil attach "$artifact_path" -readonly -nobrowse -noautoopen -mountpoint "$mo
 mounted_app="$(find "$mount_dir" -maxdepth 2 -type d -name 'Relay.app' -print -quit)"
 [[ -n "$mounted_app" ]] || { printf 'Relay.app was not found inside DMG: %s\n' "$artifact_path" >&2; exit 1; }
 verify_app "$mounted_app"
+if [[ "$require_distribution_signature" == "1" ]]; then
+  codesign --verify --verbose=2 "$artifact_path"
+  spctl --assess --type open --context context:primary-signature --verbose=4 "$artifact_path"
+fi
 printf 'Verified DMG: %s\n' "$artifact_path"

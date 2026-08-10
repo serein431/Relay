@@ -3,20 +3,20 @@ use crate::types::{
     CommandError, DownloadShareRequest, DownloadShareResult, RevokeShareRequest, RevokeShareResult,
     UploadShareRequest, UploadShareResult,
 };
-use reqwest::blocking::{Client, Response};
+use reqwest::blocking::{Body, Client, Response};
 use reqwest::header::{HeaderMap, HeaderValue, AUTHORIZATION, CONTENT_LENGTH, CONTENT_TYPE};
 use reqwest::redirect::Policy;
 use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value};
 use sha2::{Digest, Sha256};
 use std::fs::{self, OpenOptions};
-use std::io::{Read, Write};
+use std::io::{Read, Seek, SeekFrom, Write};
 use std::net::IpAddr;
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 use url::Url;
 
-const MAX_CIPHERTEXT_BYTES: usize = 32 * 1024 * 1024;
+const MAX_CIPHERTEXT_BYTES: usize = 90 * 1024 * 1024;
 const MAX_ERROR_BODY_BYTES: usize = 32 * 1024;
 const SHARE_ID_LENGTH: usize = 32;
 const KEY_LENGTH: usize = 43;
@@ -77,12 +77,14 @@ pub fn reserve_share(request: &UploadShareRequest) -> Result<UploadShareResult, 
     if inspected.ciphertext_bytes == 0 || inspected.ciphertext_bytes > MAX_CIPHERTEXT_BYTES as u64 {
         return Err(CommandError::new(
             "share_package_too_large",
-            "encrypted Relay package exceeds the 32 MiB sharing limit",
+            "encrypted Relay package exceeds the 90 MiB sharing limit",
         ));
     }
     let package_path = canonical_regular_file(Path::new(&request.package_path), "Relay package")?;
-    let package_bytes = read_file_limited(&package_path, MAX_CIPHERTEXT_BYTES)?;
-    if sha256_hex(&package_bytes) != inspected.ciphertext_sha256 {
+    let (package_length, package_sha256) =
+        sha256_file_limited(&package_path, MAX_CIPHERTEXT_BYTES)?;
+    if package_length != inspected.ciphertext_bytes || package_sha256 != inspected.ciphertext_sha256
+    {
         return Err(CommandError::new(
             "share_package_changed",
             "Relay package changed after it was inspected",
@@ -206,7 +208,7 @@ pub fn upload_reserved_blob(credentials: &SavedUploadCredentials) -> Result<(), 
         ));
     }
 
-    let package_bytes = read_saved_upload_package(credentials)?;
+    let package_file = open_saved_upload_package(credentials)?;
     let endpoint = origin
         .join(&format!("/v1/shares/{}/blob", credentials.share_id))
         .map_err(|_| CommandError::new("invalid_share_service", "cannot build upload URL"))?;
@@ -217,9 +219,9 @@ pub fn upload_reserved_blob(credentials: &SavedUploadCredentials) -> Result<(), 
             format!("Bearer {}", credentials.upload_token),
         )
         .header(CONTENT_TYPE, "application/octet-stream")
-        .header(CONTENT_LENGTH, package_bytes.len())
+        .header(CONTENT_LENGTH, credentials.ciphertext_bytes)
         .header("X-Relay-Ciphertext-Sha256", &credentials.ciphertext_sha256)
-        .body(package_bytes)
+        .body(Body::sized(package_file, credentials.ciphertext_bytes))
         .send()
         .map_err(|error| recode_error(map_http_error(error), "share_upload_failed"))?;
 
@@ -267,7 +269,7 @@ pub fn download_share(request: DownloadShareRequest) -> Result<DownloadShareResu
         if length == 0 || length > MAX_CIPHERTEXT_BYTES as u64 {
             return Err(CommandError::new(
                 "share_package_too_large",
-                "share ciphertext exceeds the 32 MiB download limit",
+                "share ciphertext exceeds the 90 MiB download limit",
             ));
         }
     }
@@ -276,26 +278,26 @@ pub fn download_share(request: DownloadShareRequest) -> Result<DownloadShareResu
         .get("X-Relay-Ciphertext-Sha256")
         .and_then(|value| value.to_str().ok())
         .map(str::to_owned);
-    let package_bytes = read_response_limited(response, MAX_CIPHERTEXT_BYTES)?;
-    if package_bytes.is_empty() {
+    let output_path = validate_new_package_path(&request.output_path)?;
+    let (downloaded_bytes, actual_sha) =
+        write_response_to_new_private_file(response, &output_path, MAX_CIPHERTEXT_BYTES)?;
+    if downloaded_bytes == 0 {
+        let _ = fs::remove_file(&output_path);
         return Err(CommandError::new(
             "share_download_failed",
             "share service returned an empty ciphertext body",
         ));
     }
-    let actual_sha = sha256_hex(&package_bytes);
     if expected_sha
         .as_deref()
         .is_some_and(|expected| !expected.eq_ignore_ascii_case(&actual_sha))
     {
+        let _ = fs::remove_file(&output_path);
         return Err(CommandError::new(
             "share_download_corrupt",
             "downloaded ciphertext differs from the service digest",
         ));
     }
-
-    let output_path = validate_new_package_path(&request.output_path)?;
-    write_new_private_file(&output_path, &package_bytes)?;
     let inspected = match relaypack::inspect_relaypack(&output_path.to_string_lossy(), &parsed.key)
     {
         Ok(inspected) => inspected,
@@ -714,34 +716,19 @@ fn canonical_regular_file(path: &Path, label: &str) -> Result<PathBuf, CommandEr
     Ok(canonical)
 }
 
-fn read_file_limited(path: &Path, limit: usize) -> Result<Vec<u8>, CommandError> {
-    let file = fs::File::open(path).map_err(|error| {
+fn sha256_file_limited(path: &Path, limit: usize) -> Result<(u64, String), CommandError> {
+    let mut file = fs::File::open(path).map_err(|error| {
         CommandError::new(
             "share_package_read_failed",
             format!("cannot open Relay package: {error}"),
         )
     })?;
-    let mut bytes = Vec::new();
-    file.take((limit + 1) as u64)
-        .read_to_end(&mut bytes)
-        .map_err(|error| {
-            CommandError::new(
-                "share_package_read_failed",
-                format!("cannot read Relay package: {error}"),
-            )
-        })?;
-    if bytes.len() > limit {
-        return Err(CommandError::new(
-            "share_package_too_large",
-            "encrypted Relay package exceeds the 32 MiB sharing limit",
-        ));
-    }
-    Ok(bytes)
+    hash_reader_limited(&mut file, limit)
 }
 
-fn read_saved_upload_package(
+fn open_saved_upload_package(
     credentials: &SavedUploadCredentials,
-) -> Result<Vec<u8>, CommandError> {
+) -> Result<fs::File, CommandError> {
     let path = Path::new(&credentials.package_path);
     let metadata = match fs::symlink_metadata(path) {
         Ok(metadata) => metadata,
@@ -772,7 +759,7 @@ fn read_saved_upload_package(
         use std::os::unix::fs::OpenOptionsExt;
         options.custom_flags(libc::O_NOFOLLOW);
     }
-    let file = options.open(path).map_err(|error| {
+    let mut file = options.open(path).map_err(|error| {
         if error.kind() == std::io::ErrorKind::NotFound {
             CommandError::new(
                 "share_package_missing",
@@ -785,24 +772,53 @@ fn read_saved_upload_package(
             )
         }
     })?;
-    let mut bytes = Vec::new();
-    file.take((MAX_CIPHERTEXT_BYTES + 1) as u64)
-        .read_to_end(&mut bytes)
-        .map_err(|error| {
-            CommandError::new(
-                "share_package_read_failed",
-                format!("cannot read the saved Relay package: {error}"),
-            )
-        })?;
-    if bytes.len() as u64 != credentials.ciphertext_bytes
-        || !sha256_hex(&bytes).eq_ignore_ascii_case(&credentials.ciphertext_sha256)
+    let (length, sha256) = hash_reader_limited(&mut file, MAX_CIPHERTEXT_BYTES)?;
+    if length != credentials.ciphertext_bytes
+        || !sha256.eq_ignore_ascii_case(&credentials.ciphertext_sha256)
     {
         return Err(CommandError::new(
             "share_package_changed",
             "the saved Relay package size or SHA-256 no longer matches the reserved share",
         ));
     }
-    Ok(bytes)
+    file.seek(SeekFrom::Start(0)).map_err(|error| {
+        CommandError::new(
+            "share_package_read_failed",
+            format!("cannot rewind the saved Relay package: {error}"),
+        )
+    })?;
+    Ok(file)
+}
+
+fn hash_reader_limited<R: Read>(
+    reader: &mut R,
+    limit: usize,
+) -> Result<(u64, String), CommandError> {
+    let mut digest = Sha256::new();
+    let mut total = 0_u64;
+    let mut buffer = [0_u8; 64 * 1024];
+    loop {
+        let read = reader.read(&mut buffer).map_err(|error| {
+            CommandError::new(
+                "share_package_read_failed",
+                format!("cannot read Relay package: {error}"),
+            )
+        })?;
+        if read == 0 {
+            break;
+        }
+        total = total.checked_add(read as u64).ok_or_else(|| {
+            CommandError::new("share_package_too_large", "Relay package size overflowed")
+        })?;
+        if total > limit as u64 {
+            return Err(CommandError::new(
+                "share_package_too_large",
+                "encrypted Relay package exceeds the 90 MiB sharing limit",
+            ));
+        }
+        digest.update(&buffer[..read]);
+    }
+    Ok((total, hex::encode(digest.finalize())))
 }
 
 fn validate_new_package_path(raw: &str) -> Result<PathBuf, CommandError> {
@@ -833,37 +849,71 @@ fn validate_new_package_path(raw: &str) -> Result<PathBuf, CommandError> {
     Ok(candidate)
 }
 
-fn write_new_private_file(path: &Path, bytes: &[u8]) -> Result<(), CommandError> {
-    let mut file = OpenOptions::new()
-        .write(true)
-        .create_new(true)
-        .open(path)
-        .map_err(|error| {
-            CommandError::new(
-                "share_download_write_failed",
-                format!("cannot create downloaded Relay package: {error}"),
-            )
-        })?;
-    file.write_all(bytes).map_err(|error| {
-        CommandError::new(
-            "share_download_write_failed",
-            format!("cannot write downloaded Relay package: {error}"),
-        )
-    })?;
+fn write_response_to_new_private_file(
+    mut response: Response,
+    path: &Path,
+    limit: usize,
+) -> Result<(u64, String), CommandError> {
+    let mut options = OpenOptions::new();
+    options.write(true).create_new(true);
     #[cfg(unix)]
     {
-        use std::os::unix::fs::PermissionsExt;
-        file.set_permissions(fs::Permissions::from_mode(0o600))
-            .map_err(|error| {
+        use std::os::unix::fs::OpenOptionsExt;
+        options.mode(0o600);
+    }
+    let mut file = options.open(path).map_err(|error| {
+        CommandError::new(
+            "share_download_write_failed",
+            format!("cannot create downloaded Relay package: {error}"),
+        )
+    })?;
+    let result = (|| {
+        let mut digest = Sha256::new();
+        let mut total = 0_u64;
+        let mut buffer = [0_u8; 64 * 1024];
+        loop {
+            let read = response.read(&mut buffer).map_err(|error| {
                 CommandError::new(
-                    "share_download_write_failed",
-                    format!("cannot protect downloaded Relay package: {error}"),
+                    "share_download_failed",
+                    format!("cannot read downloaded Relay package: {error}"),
                 )
             })?;
+            if read == 0 {
+                break;
+            }
+            total = total.checked_add(read as u64).ok_or_else(|| {
+                CommandError::new("share_package_too_large", "download size overflowed")
+            })?;
+            if total > limit as u64 {
+                return Err(CommandError::new(
+                    "share_package_too_large",
+                    "share ciphertext exceeds the 90 MiB download limit",
+                ));
+            }
+            file.write_all(&buffer[..read]).map_err(|error| {
+                CommandError::new(
+                    "share_download_write_failed",
+                    format!("cannot write downloaded Relay package: {error}"),
+                )
+            })?;
+            digest.update(&buffer[..read]);
+        }
+        file.sync_all().map_err(|error| {
+            CommandError::new(
+                "share_download_write_failed",
+                format!("cannot sync downloaded Relay package: {error}"),
+            )
+        })?;
+        Ok::<(u64, String), CommandError>((total, hex::encode(digest.finalize())))
+    })();
+    if result.is_err() {
+        drop(file);
+        let _ = fs::remove_file(path);
     }
-    Ok(())
+    result
 }
 
+#[cfg(test)]
 fn sha256_hex(bytes: &[u8]) -> String {
     hex::encode(Sha256::digest(bytes))
 }
@@ -966,6 +1016,18 @@ mod tests {
         fs::remove_file(&package).unwrap();
         let missing = upload_reserved_blob(&credentials).unwrap_err();
         assert_eq!(missing.code, "share_package_missing");
+    }
+
+    #[test]
+    fn streaming_hash_enforces_its_limit_without_buffering_the_file() {
+        let mut accepted = std::io::Cursor::new(b"abc".to_vec());
+        let (length, digest) = hash_reader_limited(&mut accepted, 3).unwrap();
+        assert_eq!(length, 3);
+        assert_eq!(digest, sha256_hex(b"abc"));
+
+        let mut rejected = std::io::Cursor::new(b"abcd".to_vec());
+        let error = hash_reader_limited(&mut rejected, 3).unwrap_err();
+        assert_eq!(error.code, "share_package_too_large");
     }
 
     #[test]

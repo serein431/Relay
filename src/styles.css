@@ -1485,6 +1485,17 @@ body { background: #f6f7f9; font-size: 13px; }
 .receive-file-only-note strong { font-size: 12px; }
 .receive-file-only-note p { margin: 4px 0 0; font-size: 11px; line-height: 1.5; }
 
+.receive-git-note {
+  padding: 13px 14px;
+  color: #3f3f46;
+  background: #f8fafc;
+  border: 1px solid #e4e4e7;
+  border-radius: 8px;
+}
+.receive-git-note strong { font-size: 13px; font-weight: 650; }
+.receive-git-note p { margin: 6px 0 0; color: #52525b; font-size: 13px; line-height: 1.6; }
+.receive-git-note code { padding: 1px 4px; background: #e4e4e7; border-radius: 4px; font: 12px/1.4 "SF Mono", Menlo, monospace; }
+
 .receive-target-actions { margin-top: 2px; }
 .receive-target-button { min-height: 68px; }
 .receive-import-note { margin: -2px 0 0; color: #71717a; font-size: 10px; line-height: 1.5; }

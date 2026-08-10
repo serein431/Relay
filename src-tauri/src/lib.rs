@@ -13,7 +13,7 @@ pub use types::{
     AdapterHealth, CommandError, DiscoverSessionsRequest, DiscoverSessionsResult,
     DownloadShareRequest, DownloadShareResult, EnvironmentStatus, ExcludedContentBlock,
     ExportRelaypackRequest, ExportRelaypackResult, ImportNativeSessionRequest,
-    ImportNativeSessionResult, InspectRelaypackResult, ListShareHistoryResult,
+    ImportNativeSessionResult, InspectRelaypackResult, ListShareHistoryResult, PathInspection,
     PreviewSessionRequest, RelaypackDiagnosticPreview, RelaypackPreview, RepositoryInspection,
     RestoreRelaypackRequest, RestoreRelaypackResult, ResumeSavedShareUploadRequest,
     ResumeSavedShareUploadResult, RevokeSavedShareRequest, RevokeSavedShareResult,
@@ -53,6 +53,24 @@ fn environment_status() -> EnvironmentStatus {
                 source: None,
                 reason: Some(error.message),
             },
+        },
+    }
+}
+
+#[tauri::command]
+fn inspect_path(path: String) -> PathInspection {
+    match std::fs::symlink_metadata(&path) {
+        Ok(metadata) => PathInspection {
+            path,
+            exists: true,
+            is_directory: metadata.is_dir(),
+            is_symlink: metadata.file_type().is_symlink(),
+        },
+        Err(_) => PathInspection {
+            path,
+            exists: false,
+            is_directory: false,
+            is_symlink: false,
         },
     }
 }
@@ -225,7 +243,7 @@ async fn import_native_session(
 }
 
 #[tauri::command]
-async fn open_imported_chatgpt_task(session_id: String) -> Result<(), CommandError> {
+async fn show_chatgpt_tasks() -> Result<(), CommandError> {
     tauri::async_runtime::spawn_blocking(move || {
         let codex_home = agent_home("CODEX_HOME", ".codex").ok_or_else(|| {
             CommandError::new(
@@ -233,13 +251,13 @@ async fn open_imported_chatgpt_task(session_id: String) -> Result<(), CommandErr
                 "cannot determine the local ChatGPT data directory",
             )
         })?;
-        chatgpt::refresh_and_open_imported_task(&session_id, &codex_home)
+        chatgpt::refresh_and_show_task_list(&codex_home)
     })
     .await
     .map_err(|error| {
         CommandError::new(
             "background_task_failed",
-            format!("ChatGPT open task failed: {error}"),
+            format!("ChatGPT launch failed: {error}"),
         )
     })?
 }
@@ -505,6 +523,7 @@ pub fn run() {
         .plugin(tauri_plugin_dialog::init())
         .invoke_handler(tauri::generate_handler![
             environment_status,
+            inspect_path,
             adapter_health,
             discover_sessions,
             preview_session,
@@ -513,7 +532,7 @@ pub fn run() {
             inspect_relaypack,
             restore_relaypack,
             import_native_session,
-            open_imported_chatgpt_task,
+            show_chatgpt_tasks,
             upload_share,
             resume_saved_share_upload,
             list_share_history,
@@ -537,6 +556,38 @@ mod tests {
         ));
         assert!(!status.exists);
         assert!(!status.is_directory);
+    }
+
+    #[test]
+    fn inspect_path_distinguishes_directories_and_files() {
+        let temp = tempfile::tempdir().unwrap();
+        let directory = inspect_path(temp.path().to_string_lossy().into_owned());
+        assert!(directory.exists);
+        assert!(directory.is_directory);
+        assert!(!directory.is_symlink);
+
+        let file = temp.path().join("share.relaypack");
+        std::fs::write(&file, b"test").unwrap();
+        let file = inspect_path(file.to_string_lossy().into_owned());
+        assert!(file.exists);
+        assert!(!file.is_directory);
+        assert!(!file.is_symlink);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn inspect_path_rejects_a_directory_symlink() {
+        use std::os::unix::fs::symlink;
+
+        let temp = tempfile::tempdir().unwrap();
+        let target = temp.path().join("target");
+        let link = temp.path().join("link");
+        std::fs::create_dir(&target).unwrap();
+        symlink(&target, &link).unwrap();
+        let inspection = inspect_path(link.to_string_lossy().into_owned());
+        assert!(inspection.exists);
+        assert!(!inspection.is_directory);
+        assert!(inspection.is_symlink);
     }
 
     #[test]

@@ -112,6 +112,14 @@ pub struct PathStatus {
 }
 
 #[derive(Debug, Clone, Serialize)]
+pub struct PathInspection {
+    pub path: String,
+    pub exists: bool,
+    pub is_directory: bool,
+    pub is_symlink: bool,
+}
+
+#[derive(Debug, Clone, Serialize)]
 pub struct AdapterExecutableStatus {
     pub available: bool,
     #[serde(skip_serializing_if = "Option::is_none")]

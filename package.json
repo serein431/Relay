@@ -17,8 +17,9 @@
     "check": "pnpm build && pnpm test:frontend && pnpm schema:check && pnpm adapter:check && pnpm cloud:check && pnpm desktop:check",
     "desktop:dev": "tauri dev",
     "desktop:build": "tauri build",
-    "desktop:build:local": "tauri build --bundles app,dmg --no-sign",
+    "desktop:build:local": "APPLE_SIGNING_IDENTITY=- tauri build --bundles app,dmg",
     "desktop:verify": "bash scripts/verify-macos-bundle.sh",
+    "desktop:verify:release": "RELAY_REQUIRE_DISTRIBUTION_SIGNATURE=1 bash scripts/verify-macos-bundle.sh",
     "tauri": "tauri"
   },
   "dependencies": {
