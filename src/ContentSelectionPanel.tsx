@@ -101,19 +101,49 @@ export function updateMessageSelection(
   const nextMessages = new Set(excludedMessageIds);
   if (included) nextMessages.delete(message.id);
   else nextMessages.add(message.id);
-  let nextBlocks = excludedBlocks;
-  message.blocks.forEach((_, blockIndex) => {
-    nextBlocks = updateExcludedBlocks(
-      messages,
-      nextBlocks,
-      message.id,
-      blockIndex,
-      included,
-    );
+
+  const affected = new Set<string>();
+  const relatedCallIds = new Set<string>();
+  message.blocks.forEach((block, blockIndex) => {
+    affected.add(blockKey(message.id, blockIndex));
+    if (
+      block.call_id &&
+      (block.kind === "tool_call" || block.kind === "tool_result")
+    ) {
+      relatedCallIds.add(block.call_id);
+    }
   });
+  if (relatedCallIds.size > 0) {
+    for (const candidateMessage of messages) {
+      candidateMessage.blocks.forEach((block, blockIndex) => {
+        if (
+          block.call_id &&
+          relatedCallIds.has(block.call_id) &&
+          (block.kind === "tool_call" || block.kind === "tool_result")
+        ) {
+          affected.add(blockKey(candidateMessage.id, blockIndex));
+        }
+      });
+    }
+  }
+
+  const nextBlocks = new Map(
+    excludedBlocks.map((item) => [blockKey(item.message_id, item.block_index), item]),
+  );
+  for (const key of affected) {
+    if (included) {
+      nextBlocks.delete(key);
+      continue;
+    }
+    const separator = key.lastIndexOf("\u0000");
+    nextBlocks.set(key, {
+      message_id: key.slice(0, separator),
+      block_index: Number(key.slice(separator + 1)),
+    });
+  }
   return {
     excludedMessageIds: [...nextMessages],
-    excludedBlocks: nextBlocks,
+    excludedBlocks: [...nextBlocks.values()],
   };
 }
 
@@ -134,7 +164,7 @@ function blockLabel(block: AdapterPreviewBlock): string {
     case "tool_call": return `工具调用${block.name ? ` · ${block.name}` : ""}`;
     case "tool_result": return "工具调用结果";
     case "asset_ref": return `附件${block.native_type ? ` · ${block.native_type}` : ""}`;
-    case "source_context": return `项目指令${block.native_type ? ` · ${block.native_type}` : ""}`;
+    case "source_context": return `项目说明${block.native_type ? ` · ${block.native_type}` : ""}`;
     case "unsupported": return `未识别内容${block.native_type ? ` · ${block.native_type}` : ""}`;
     default: return block.kind || "未知内容";
   }
@@ -223,22 +253,33 @@ export default function ContentSelectionPanel({
   );
   const visible = filtered.slice(0, visibleLimit);
 
-  const sensitiveSelectedCount = useMemo(() => {
-    let count = 0;
+  const selectionSummary = useMemo<ContentSelectionSummary>(() => {
+    const summary = {
+      messages: 0,
+      blocks: 0,
+      toolBlocks: 0,
+      instructionBlocks: 0,
+      sensitive: 0,
+    };
     for (const message of shareableMessages) {
       if (excludedMessages.has(message.id)) continue;
+      let messageIncluded = false;
       message.blocks.forEach((block, index) => {
-        if (
-          blockEnabled(block, options) &&
-          !excludedBlockKeys.has(blockKey(message.id, index)) &&
-          sensitiveHints(blockValue(block)).length > 0
-        ) {
-          count += 1;
+        if (!blockEnabled(block, options)) return;
+        if (excludedBlockKeys.has(blockKey(message.id, index))) return;
+        messageIncluded = true;
+        summary.blocks += 1;
+        if (block.kind === "tool_call" || block.kind === "tool_result") {
+          summary.toolBlocks += 1;
         }
+        if (block.kind === "source_context") summary.instructionBlocks += 1;
+        if (sensitiveHints(blockValue(block)).length > 0) summary.sensitive += 1;
       });
+      if (messageIncluded) summary.messages += 1;
     }
-    return count;
+    return summary;
   }, [excludedBlockKeys, excludedMessages, options, shareableMessages]);
+  const sensitiveSelectedCount = selectionSummary.sensitive;
 
   useEffect(() => {
     onSensitiveCountChange?.(sensitiveSelectedCount);
@@ -270,77 +311,30 @@ export default function ContentSelectionPanel({
     ));
   };
 
-  const selectedMessages = shareableMessages.filter((message) =>
-    !excludedMessages.has(message.id) &&
-    message.blocks.some((block, index) =>
-      blockEnabled(block, options) &&
-      !excludedBlockKeys.has(blockKey(message.id, index))),
-  ).length;
-  const selectedBlocks = shareableMessages.reduce((count, message) => {
-    if (excludedMessages.has(message.id)) return count;
-    return count + message.blocks.filter((block, index) =>
-      blockEnabled(block, options) &&
-      !excludedBlockKeys.has(blockKey(message.id, index))).length;
-  }, 0);
-  const selectedToolBlocks = shareableMessages.reduce((count, message) => {
-    if (excludedMessages.has(message.id)) return count;
-    return count + message.blocks.filter((block, index) =>
-      (block.kind === "tool_call" || block.kind === "tool_result") &&
-      blockEnabled(block, options) &&
-      !excludedBlockKeys.has(blockKey(message.id, index))).length;
-  }, 0);
-  const selectedInstructionBlocks = shareableMessages.reduce((count, message) => {
-    if (excludedMessages.has(message.id)) return count;
-    return count + message.blocks.filter((block, index) =>
-      block.kind === "source_context" &&
-      blockEnabled(block, options) &&
-      !excludedBlockKeys.has(blockKey(message.id, index))).length;
-  }, 0);
-
   useEffect(() => {
-    onSelectionSummaryChange?.({
-      messages: selectedMessages,
-      blocks: selectedBlocks,
-      toolBlocks: selectedToolBlocks,
-      instructionBlocks: selectedInstructionBlocks,
-      sensitive: sensitiveSelectedCount,
-    });
+    onSelectionSummaryChange?.(selectionSummary);
   }, [
     onSelectionSummaryChange,
-    selectedBlocks,
-    selectedInstructionBlocks,
-    selectedMessages,
-    selectedToolBlocks,
-    sensitiveSelectedCount,
+    selectionSummary,
   ]);
 
   return (
     <section className="content-selection">
       <header className="content-selection-heading">
         <div>
-          <span className="eyebrow">导出内容检查</span>
-          <h3>会话内容与项目指令</h3>
-          <p>这里只显示上一步选中的内容类型。取消选择的项目不会写入分享包。</p>
+          <h3>会话内容</h3>
+          <p>默认保留已选择的内容。需要时可排除单条消息或工具记录。</p>
         </div>
         <div className="content-selection-counts">
-          <strong>{selectedMessages} / {shareableMessages.length}</strong>
-          <span>{selectedBlocks} 项具体内容</span>
+          <strong>{selectionSummary.messages} 条消息</strong>
+          <span>共 {selectionSummary.blocks} 项内容</span>
         </div>
       </header>
-
-      <div className="content-selection-overview" aria-label="会话内容概要">
-        <div><strong>{selectedMessages}</strong><span>条消息</span></div>
-        <div><strong>{selectedToolBlocks}</strong><span>项工具调用记录</span></div>
-        <div><strong>{selectedInstructionBlocks}</strong><span>段项目指令</span></div>
-        <div className={sensitiveSelectedCount > 0 ? "has-warning" : ""}>
-          <strong>{sensitiveSelectedCount}</strong><span>项需要检查</span>
-        </div>
-      </div>
 
       <details className="content-selection-details">
         <summary>
           <span>逐项检查会话内容</span>
-          <small>可排除单条消息、工具调用或调用结果</small>
+          <small>可取消单条消息、工具调用或结果</small>
         </summary>
 
         <div className="content-selection-toolbar">
@@ -425,7 +419,6 @@ export default function ContentSelectionPanel({
                       <span className="content-block-body">
                         <span className="content-block-topline">
                           <strong>{blockLabel(block)}</strong>
-                          {block.call_id ? <code>call {block.call_id}</code> : null}
                         </span>
                         <pre>{previewText(blockValue(block))}</pre>
                         {hints.length > 0 ? (

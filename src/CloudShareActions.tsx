@@ -1,5 +1,6 @@
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { copyText } from "./lib/clipboard";
+import { userErrorMessage } from "./lib/errors";
 import { revokeSavedShare, uploadShare } from "./lib/tauri";
 import { DEFAULT_SHARE_SERVICE_BASE_URL } from "./lib/share-service";
 import type { ExportRelaypackResult, UploadShareResult } from "./types";
@@ -8,16 +9,9 @@ type CloudShareActionsProps = {
   pack: ExportRelaypackResult;
   onNotice: (message: string) => void;
   onHistoryChanged?: () => void;
+  autoUpload?: boolean;
+  initialExpiresInSeconds?: number;
 };
-
-function errorMessage(error: unknown): string {
-  if (error instanceof Error) return error.message;
-  if (typeof error === "string") return error;
-  if (typeof error === "object" && error !== null && "message" in error) {
-    return String((error as { message: unknown }).message);
-  }
-  return String(error);
-}
 
 function isPendingUploadError(error: unknown): boolean {
   if (typeof error !== "object" || error === null) return false;
@@ -31,13 +25,17 @@ export default function CloudShareActions({
   pack,
   onNotice,
   onHistoryChanged,
+  autoUpload = false,
+  initialExpiresInSeconds = 7 * 24 * 60 * 60,
 }: CloudShareActionsProps) {
-  const [expiresInSeconds, setExpiresInSeconds] = useState(7 * 24 * 60 * 60);
+  const [expiresInSeconds, setExpiresInSeconds] = useState(initialExpiresInSeconds);
   const [share, setShare] = useState<UploadShareResult | null>(null);
   const [revoked, setRevoked] = useState(false);
   const [revokeConfirming, setRevokeConfirming] = useState(false);
   const [busy, setBusy] = useState<"upload" | "revoke" | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [manualCopy, setManualCopy] = useState(false);
+  const autoUploadStarted = useRef(false);
 
   const upload = async () => {
     setBusy("upload");
@@ -53,35 +51,45 @@ export default function CloudShareActions({
       });
       setShare(result);
       setRevoked(false);
+      setManualCopy(false);
       onHistoryChanged?.();
       try {
         await copyText(result.share_url);
-        onNotice("加密分享链接已生成并复制，撤销凭据已经保存在本机。");
+        onNotice("分享链接已生成并复制。");
       } catch {
-        onNotice("加密分享链接已经生成。自动复制失败，请点击“复制链接”。");
+        setManualCopy(true);
+        onNotice("分享链接已经生成。自动复制失败，请点击“复制链接”。");
       }
     } catch (caught) {
       if (isPendingUploadError(caught)) {
         onHistoryChanged?.();
         setError(
-          "分享凭据已经安全保存在本机，但密文上传尚未确认完成。请到“分享记录”继续上传或撤销。",
+          "分享文件还没有上传完成。请到“分享记录”继续上传或撤销。",
         );
         onNotice("上传尚未完成，可以从分享记录继续或撤销。");
       } else {
-        setError(errorMessage(caught));
+        setError(userErrorMessage(caught, "无法生成分享链接，请稍后重试。"));
       }
     } finally {
       setBusy(null);
     }
   };
 
+  useEffect(() => {
+    if (!autoUpload || autoUploadStarted.current) return;
+    autoUploadStarted.current = true;
+    void upload();
+  }, [autoUpload]);
+
   const copy = async () => {
     if (!share) return;
     try {
       await copyText(share.share_url);
+      setManualCopy(false);
       onNotice("分享链接已复制。");
     } catch {
-      onNotice("复制失败，请手动选择链接复制。");
+      setManualCopy(true);
+      onNotice("自动复制失败，请在页面中手动复制链接。");
     }
   };
 
@@ -97,35 +105,38 @@ export default function CloudShareActions({
     try {
       await revokeSavedShare({ share_id: share.share_id });
       setRevoked(true);
+      setManualCopy(false);
       setRevokeConfirming(false);
       onHistoryChanged?.();
-      onNotice("这个分享已经撤销，旧链接不能再下载密文包。");
+      onNotice("分享已撤销，旧链接不能再打开分享内容。");
     } catch (caught) {
-      setError(errorMessage(caught));
+      setError(userErrorMessage(caught, "无法撤销分享链接，请稍后重试。"));
     } finally {
       setBusy(null);
     }
   };
 
   return (
-    <section className="cloud-share-actions">
-      <div className="cloud-share-heading">
-        <div><span className="eyebrow">发送方式一 · 推荐</span><h4>生成分享链接</h4></div>
-        <span>只上传密文</span>
-      </div>
-
+    <section className="cloud-share-actions" aria-label="分享链接">
       {share ? (
         <>
-          <label className="share-url-field">
-            <span>{revoked ? "已撤销链接" : "完整分享链接"}</span>
-            <code className={revoked ? "is-revoked" : ""}>{share.share_url}</code>
-          </label>
-          <div className="share-expiry">
-            <span>到期时间</span><strong>{new Date(share.expires_at).toLocaleString("zh-CN")}</strong>
+          <div className={`share-ready${revoked ? " is-revoked" : ""}`}>
+            <strong>{revoked ? "分享链接已撤销" : "分享链接已生成"}</strong>
+            <span>{revoked ? "接收者不能再打开这个链接。" : "链接已经复制，可以直接发送给接收者。"}</span>
+            {!revoked ? (
+              <small>有效至 {new Date(share.expires_at).toLocaleString("zh-CN")}</small>
+            ) : null}
           </div>
-          <p className="share-capability-note">接收者无需安装 Relay，即可直接在浏览器中查看聊天记录和交接说明；恢复代码或创建本机任务时才需要桌面应用。</p>
-          <p className="share-capability-note">链接中 # 后面的密钥不会随 HTTP 请求发送，但聊天软件、剪贴板历史和截图仍可能看到完整链接。</p>
-          <p className="share-capability-note">撤销所需的令牌只保存在 Relay 的本机数据目录，不会显示在页面里。</p>
+          {manualCopy && !revoked ? (
+            <label className="share-manual-copy">
+              <span>手动复制链接</span>
+              <textarea
+                readOnly
+                value={share.share_url}
+                onFocus={(event) => event.currentTarget.select()}
+              />
+            </label>
+          ) : null}
           <div className="cloud-share-buttons">
             <button type="button" onClick={() => void revoke()} disabled={busy !== null || revoked}>
               {busy === "revoke" ? "正在撤销" : revoked ? "已经撤销" : revokeConfirming ? "再点一次确认撤销" : "撤销链接"}
@@ -134,25 +145,36 @@ export default function CloudShareActions({
               复制链接
             </button>
           </div>
+          <p className="cloud-share-note">链接包含查看权限，请只发送给需要查看的人。</p>
         </>
       ) : (
         <>
-          <p className="cloud-share-intro">接收者可以直接在浏览器中查看分享，无需先安装 Relay。拥有完整链接的人都能读取内容；上传前请确认接收者和有效期。</p>
-          <div className="cloud-share-grid is-single">
-            <label>
-              <span>有效期</span>
-              <select value={expiresInSeconds} onChange={(event) => setExpiresInSeconds(Number(event.target.value))}>
-                <option value={24 * 60 * 60}>1 天</option>
-                <option value={7 * 24 * 60 * 60}>7 天</option>
-                <option value={30 * 24 * 60 * 60}>30 天</option>
-              </select>
-            </label>
-          </div>
-          <p className="cloud-service-note">Relay 只上传已经加密的分享包，服务端无法读取聊天记录、代码和解密密钥。</p>
+          {autoUpload ? (
+            <p className="cloud-share-progress">
+              {busy === "upload" ? "正在生成分享链接…" : "正在准备分享链接…"}
+            </p>
+          ) : (
+            <>
+              <p className="cloud-share-intro">链接有效期内，任何持有者都可以查看分享内容。</p>
+              <div className="cloud-share-grid is-single">
+                <label>
+                  <span>有效期</span>
+                  <select value={expiresInSeconds} onChange={(event) => setExpiresInSeconds(Number(event.target.value))}>
+                    <option value={24 * 60 * 60}>1 天</option>
+                    <option value={7 * 24 * 60 * 60}>7 天</option>
+                    <option value={30 * 24 * 60 * 60}>30 天</option>
+                  </select>
+                </label>
+              </div>
+            </>
+          )}
           {error ? <p className="cloud-share-error">{error}</p> : null}
-          <button className="cloud-upload-button" type="button" onClick={() => void upload()} disabled={busy !== null}>
-            {busy === "upload" ? "正在上传密文" : "生成分享链接并复制"}
-          </button>
+          {!autoUpload || error ? (
+            <button className="cloud-upload-button" type="button" onClick={() => void upload()} disabled={busy !== null}>
+              {busy === "upload" ? "正在生成分享链接" : error ? "重新生成分享链接" : "生成分享链接"}
+            </button>
+          ) : null}
+          <p className="cloud-share-note">内容加密后上传，分享服务不能读取聊天记录或代码。</p>
         </>
       )}
       {share && error ? <p className="cloud-share-error">{error}</p> : null}

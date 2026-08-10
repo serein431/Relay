@@ -13,17 +13,25 @@ verify_app() {
   local app_path="$1"
   local main_binary="$app_path/Contents/MacOS/relay"
   local adapter_binary="$app_path/Contents/MacOS/relay-agent-adapter"
+  local importer_binary="$app_path/Contents/MacOS/relay-session-importer"
 
   [[ -d "$app_path" ]] || { printf 'Relay.app not found: %s\n' "$app_path" >&2; exit 1; }
   [[ -x "$main_binary" ]] || { printf 'Relay main executable is missing: %s\n' "$main_binary" >&2; exit 1; }
   [[ -x "$adapter_binary" ]] || { printf 'Bundled Relay Adapter is missing or not executable: %s\n' "$adapter_binary" >&2; exit 1; }
+  [[ -x "$importer_binary" ]] || { printf 'Bundled Relay Session Importer is missing or not executable: %s\n' "$importer_binary" >&2; exit 1; }
 
   local main_arches
   local adapter_arches
+  local importer_arches
   main_arches="$(lipo -archs "$main_binary")"
   adapter_arches="$(lipo -archs "$adapter_binary")"
+  importer_arches="$(lipo -archs "$importer_binary")"
   [[ "$main_arches" == "$adapter_arches" ]] || {
     printf 'Relay and Adapter architectures differ: app=%s adapter=%s\n' "$main_arches" "$adapter_arches" >&2
+    exit 1
+  }
+  [[ "$main_arches" == "$importer_arches" ]] || {
+    printf 'Relay and Session Importer architectures differ: app=%s importer=%s\n' "$main_arches" "$importer_arches" >&2
     exit 1
   }
 
@@ -41,7 +49,21 @@ verify_app() {
       });
     '
 
-  printf 'Verified %s (%s) with bundled read-only Adapter.\n' "$app_path" "$main_arches"
+  printf '%s\n' '{}' \
+    | "$importer_binary" \
+    | node -e '
+      let input = "";
+      process.stdin.setEncoding("utf8");
+      process.stdin.on("data", chunk => { input += chunk; });
+      process.stdin.on("end", () => {
+        const response = JSON.parse(input);
+        if (response.ok !== false || response.error?.code !== "invalid_request") {
+          throw new Error("bundled Session Importer returned an invalid protocol response");
+        }
+      });
+    '
+
+  printf 'Verified %s (%s) with bundled Adapter and Session Importer.\n' "$app_path" "$main_arches"
 }
 
 if [[ -d "$artifact_path" ]]; then

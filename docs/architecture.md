@@ -2,14 +2,14 @@
 
 ## 目标和首版范围
 
-Relay 是一个 macOS 桌面应用。发送方从 Claude Code 或 ChatGPT 桌面应用的本机会话中选择可分享内容，并可附带 Git 工作现场。接收方先查看包内内容：有 Git 内容时在新 worktree 中恢复代码；只有会话与说明时创建普通文件夹。随后可选择 Claude Code 或 ChatGPT 开一个新会话读取交接材料。
+Relay 是一个 macOS 桌面应用。发送方从 Claude Code 或 ChatGPT 桌面应用的本机会话中选择可分享内容，并可附带 Git 工作现场。接收方先查看包内内容：有 Git 内容时在新 worktree 中恢复代码；只有会话与说明时创建普通文件夹。随后可把已选择的记录导入为一条新的 Claude Code 会话或 ChatGPT 本机任务。
 
 面向用户的应用名称统一为 ChatGPT。为兼容现有本机数据和系统注册信息，技术实现仍使用 `codex` provider、`~/.codex`、`codex://` 和 bundle ID `com.openai.codex`；Codex CLI 以及 Schema、协议中的 provider 值不改名。
 
 首版有几条固定边界：
 
-- Claude Code 和 ChatGPT 的原生会话目录只读。
-- 接收方不会把记录写进任何 Agent 的原生历史库。
+- 发送方的 Claude Code 和 ChatGPT 会话目录只读。
+- 接收方只有明确点击导入后，才会新增一条原生会话；已有会话文件不会被修改。
 - 工具调用和工具结果只是过去发生过的记录，Relay 不会再次执行。
 - Relay 不会自动运行安装、构建、测试或项目脚本。
 - 含 Git 内容的接收会创建新 worktree；纯会话接收会创建新的普通文件夹。两者都不修改用户正在使用的工作区。
@@ -28,14 +28,15 @@ flowchart LR
     G -->|"HTTPS 上传和下载"| H["Cloudflare Worker + R2 密文存储"]
     G --> I["接收端安全检查"]
     I --> J["新 worktree 或普通交接文件夹"]
-    J --> K["Claude Code 或 ChatGPT 新会话"]
+    J --> K["原生会话导入器"]
+    K --> L["Claude Code 会话或 ChatGPT 任务"]
 ```
 
 ### React 界面
 
 前端负责展示项目、workspace、会话列表、分享选择页、包预览和接收结果。它通过 Tauri command 调用 Rust，不直接读取 Agent 历史目录，也不直接执行 Git。
 
-前端已有会话、项目、分享选项、加密包、云端上传、接收预览和本机分享记录页面。浏览器开发模式仍显示演示数据；真实 Adapter、Git 和文件操作只在 Tauri 应用中运行。
+前端已有会话、项目、分享选项、加密包、云端上传、接收预览和本机分享记录页面。浏览器开发模式不提供本机会话数据，只显示桌面应用说明；真实 Adapter、Git 和文件操作只在 Tauri 应用中运行。
 
 ### Tauri / Rust Core
 
@@ -48,13 +49,16 @@ Rust 是桌面应用的可信边界，职责包括：
 - 生成和校验 `relay.handoff.v1`。
 - 生成包、计算摘要、加密、解密和限制输入大小。
 - 导入 Git 数据前先检查，随后在新 worktree 中恢复；没有 Git 数据时只创建普通交接文件夹。
-- 创建只读交接材料，并启动用户选择的 Agent 新会话。
+- 创建只读交接材料，并调用独立导入器新增用户选择的 Agent 会话。
+- 导入后检查会话文件、索引和 ChatGPT 任务数据库；ChatGPT 任务通过验签后的应用打开。
 
 当前代码已覆盖上述主流程，并用 Rust 测试验证错密钥、密文篡改、危险路径、Git hook/filter、恢复失败后保留现场和纯聊天包恢复。发行版仍需补正式域名、Universal Link、签名、公证和安装测试。
 
-### Go Adapter
+### Go Adapter 和会话导入器
 
-Adapter 只处理原生会话格式的差异。它扫描 Claude Code 和 ChatGPT 的历史目录，返回会话摘要，或把一个会话解析成通用消息结构。它不负责 Git、压缩、加密、上传、恢复和启动 Agent。
+`relay-agent-adapter` 只读扫描 Claude Code 和 ChatGPT 的历史目录，返回会话摘要，或把一个会话解析成通用消息结构。`relay-session-importer` 只在接收者明确选择目标 Agent 后运行，把 `relay.handoff.v1` 中允许分享的记录转换为新的本机会话。
+
+导入器不会复制发送方的原始 JSONL。它只写入可见消息、项目说明和历史工具记录，不包含私有推理、认证信息或厂商内部状态。ChatGPT 使用原生标题事件、任务索引和 SQLite 的自定义名称字段保存带导入时间与短 ID 的唯一标题，标题不会作为聊天消息出现；第一条可见消息仍是发送者允许分享的原始内容或 Relay 的历史记录说明。为了避免 ChatGPT 在接收者继续对话后用第一条项目说明重写标题，SQLite 的 `first_user_message` 使用同一个导入标题作为名称提示，不改变 JSONL 中可见消息的顺序。ChatGPT 导入会新增 JSONL、追加任务索引、通过 SQLite 事务插入任务记录并设为置顶；桌面状态文件存在时也会加入其中的置顶列表。Claude Code 导入会新增项目会话 JSONL，并通过临时文件替换项目会话索引。写入前会备份相关索引、数据库文件和 ChatGPT 桌面状态。
 
 把 Adapter 做成独立 sidecar 有两个原因：原生记录格式变化频繁，可以单独增加解析 fixture；解析失败也不会让桌面进程直接处理不受信任的大文件。进程通信规则见 [adapter-protocol.md](adapter-protocol.md)。
 
@@ -62,7 +66,7 @@ Adapter 只处理原生会话格式的差异。它扫描 Claude Code 和 ChatGPT
 
 `cloud/` 中的 Cloudflare Worker 只保存客户端生成的密文和最少状态。R2 保存二进制包，Durable Object 保存到期、撤销和摘要信息。客户端与服务端都把云分享密文限制为 32 MiB。两步上传中，公开 PUT 先由 Worker 向 Durable Object 发没有正文的 `authorize` 请求，Worker 再把请求正文直接流式写入 R2，最后向 Durable Object 发没有正文的 `complete` 请求。
 
-`/s/v1/:id` 接收页包含随 Worker 一起构建的浏览器脚本。它读取 URL fragment 中的密钥，只向同源地址请求公开元数据和密文，然后在浏览器内完成 SHA-256、AES-256-GCM、zstd 和包内容检查。页面可以显示完整聊天记录与 `HANDOFF.md`，也可下载原始 `.relaypack`；Git 恢复和 Agent 启动仍由桌面应用处理。页面不引用 CDN、外部字体或第三方接口。服务端不会在 HTTP 请求中收到 fragment，但页面代码理论上能够读取它，因此完整链接仍然不是接收者身份认证。具体限制见 [security.md](security.md)。
+`/s/v1/:id` 接收页包含随 Worker 一起构建的浏览器脚本。它读取 URL fragment 中的密钥，只向同源地址请求公开元数据和密文，然后在浏览器内完成 SHA-256、AES-256-GCM、zstd 和包内容检查。页面可以显示完整聊天记录与 `HANDOFF.md`，也可下载原始 `.relaypack`；Git 恢复和原生会话导入仍由桌面应用处理。页面不引用 CDN、外部字体或第三方接口。服务端不会在 HTTP 请求中收到 fragment，但页面代码理论上能够读取它，因此完整链接仍然不是接收者身份认证。具体限制见 [security.md](security.md)。
 
 ## 三层数据
 
@@ -142,15 +146,15 @@ Rust validator 还会检查引用关系，例如资产 ID 必须唯一且真实�
 
 1. 下载密文到用户选择的 `.relaypack` 路径，核对长度和 SHA-256；若 AEAD 或内容检查失败，立即删除该文件。
 2. 展示项目、会话、Git 改动、附件和警告，等待用户确认。
-3. 有 Git 内容时，用户选择接收方仓库、新 worktree 路径和新分支名；纯会话包只选择一个尚不存在的新文件夹。
-4. 有 Git 内容时导入本地提交并创建新 worktree；纯会话包创建普通文件夹，并在根目录写入只读的 `HANDOFF.md` 和 `handoff.json`，不要求 Git 仓库。
+3. 有 Git 内容时，用户选择接收方仓库和新项目的保存位置，Relay 自动生成不会重名的新分支名；纯会话包只选择新文件夹的保存位置。用户随后直接选择导入到 ChatGPT 或 Claude Code，也可只保存文件。
+4. 有 Git 内容时导入本地提交并创建新 worktree；纯会话包创建普通文件夹，并在根目录写入只读的 `HANDOFF.md` 和 `handoff.json`，不要求 Git 仓库。这两个文件只用于浏览器阅读、未安装 Relay 或原生会话导入失败时备用。
 5. 先检查 staged patch，再检查 unstaged patch，最后写入选中的 untracked 文件。任何一步失败都停止，保留诊断信息。
 6. 比较恢复后的 HEAD、index 和 working tree，确保与包内描述一致。
 7. Git 恢复会在 worktree 中创建只读的随机 Relay 交接目录，并用精确 ignore 规则避免改变用户看到的 Git 状态；纯会话恢复直接使用新建的普通文件夹。
-8. 由用户选择 Claude Code 或 ChatGPT。Claude Code 使用公开后台会话入口，并通过启动前后的后台会话列表确认新会话 ID、目录和状态；找不到唯一的新会话时不声称启动成功。
-9. ChatGPT 路径先枚举 `codex://` 的 macOS 处理应用，并用 Security.framework 核对 OpenAI 的 bundle ID、Team ID、嵌套代码和所有架构。验签通过后才构造含工作目录路径的 deep link，并明确指定 ChatGPT 打开。结果只表示 `OPEN_REQUESTED`，首条说明仍由用户点击发送。
-
-首版不会把转换后的消息写入 `~/.claude` 或 `~/.codex` 的历史文件。这样会少一些原生“继续会话”的外观，但能避开格式版本变化和损坏历史库的风险。
+8. 验证结果会先说明分享包是否包含可导入的聊天或项目说明。只有代码或工具记录时，界面只允许保存文件，不创建空会话。用户选择目标 Agent 后，导入器分配新的会话 ID，检查目标文件、索引和 ChatGPT SQLite 中没有同名记录，再生成会话内容。
+9. ChatGPT 会话使用 UUID v7，新增 `~/.codex/sessions/.../rollout-*.jsonl`，追加 `session_index.jsonl`，通过 SQLite 事务新增任务记录并写入置顶状态；在 `.codex-global-state.json` 存在时，也把新任务加入 `pinned-thread-ids`。如果 ChatGPT 尚未建立 `state_5.sqlite`，Relay 会要求用户先打开一次 ChatGPT，不会只写一份无法出现在任务列表中的 JSONL。Claude Code 会话使用新的 UUID，新增项目 JSONL，并更新 `sessions-index.json`。
+10. 导入完成后再次检查会话文件、索引、ChatGPT SQLite 记录和置顶状态。任一步失败时，只删除本次创建的文件和记录，并返回备份位置。
+11. ChatGPT 路径先枚举 `codex://` 的 macOS 处理应用，并用 Security.framework 核对 OpenAI 的 bundle ID、Team ID、嵌套代码和所有架构。验签通过后，Relay 等待运行中的 ChatGPT 读取新增任务，再打开 `codex://threads/<新任务 ID>`。macOS 回调只表示打开请求已经送出；接收页面允许再次发送请求，不会重复创建任务。Claude Code 返回 `claude --resume <新会话 ID>`，不替用户选择终端。
 
 恢复失败时不会强制删除已经创建的 worktree 或分支。错误会返回保留路径、分支 ref 和清理诊断，避免误删恢复期间由其他进程写入的文件。交接目录的 ignore 规则写进 Git common directory 的 `info/exclude`；实现会比较文件身份与内容后再替换和回退，但外部进程不受应用内锁约束，因此仍保留一个很短的并发修改窗口，详见 [security.md](security.md)。
 
@@ -160,7 +164,7 @@ Rust validator 还会检查引用关系，例如资产 ID 必须唯一且真实�
 
 桌面端先用 JSON POST 预留分享。拿到每条分享自己的上传令牌和撤销令牌后，先把完整 `pending_upload` 记录写入临时文件，完成文件与目录同步，再 PUT 密文。Worker 先向 Durable Object 发没有正文的 `authorize` 请求，通过后把密文直接流式写入 R2，再向 Durable Object 发没有正文的 `complete` 请求。服务端状态变为 `ready` 后，桌面端才把本机记录原子改成 `active` 并删除上传令牌。待上传记录可以继续或撤销；继续前会重新核对包路径、长度和 SHA-256。
 
-Worker 默认给预留 900 秒上传期限。首次 PUT 返回 201，相同令牌、长度和摘要的重试返回 200，不同内容返回 409；进入 `ready` 后不会延长最终有效期。未完成的预留以及写入后未完成确认的 R2 对象由 upload deadline 和 Durable Object alarm 清理。旧版 direct POST 仅作为兼容接口保留，新版桌面端不自动退回。
+Worker 默认给预留 900 秒上传期限。首次 PUT 返回 201，相同令牌、长度和摘要的重试返回 200，不同内容返回 409；进入 `ready` 后不会延长最终有效期。未完成的预留以及写入后未完成确认的 R2 对象由 upload deadline 和 Durable Object alarm 清理。
 
 ## 兼容策略
 
@@ -173,7 +177,7 @@ Worker 默认给预留 900 秒上传期限。首次 PUT 返回 201，相同令�
 
 这些能力不属于当前首版：
 
-- 写入或伪造 Claude Code / ChatGPT 原生历史。
+- 直接复制发送方原始 JSONL、模型私有推理或厂商隐藏状态。
 - 实时多人编辑同一个工作区。
 - Windows 和 Linux 桌面应用。
 - 自动运行项目命令。

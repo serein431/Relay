@@ -1431,6 +1431,7 @@ fn preview_from_handoff(handoff: &Value) -> Result<RelaypackPreview, CommandErro
             .pointer("/conversation/records")
             .and_then(Value::as_array)
             .map_or(0, Vec::len),
+        importable_session: handoff_has_importable_session(handoff),
         asset_count: handoff
             .get("assets")
             .and_then(Value::as_array)
@@ -1440,6 +1441,38 @@ fn preview_from_handoff(handoff: &Value) -> Result<RelaypackPreview, CommandErro
             .and_then(Value::as_array)
             .map_or(0, Vec::len),
         diagnostics,
+    })
+}
+
+fn handoff_has_importable_session(handoff: &Value) -> bool {
+    let Some(records) = handoff
+        .pointer("/conversation/records")
+        .and_then(Value::as_array)
+    else {
+        return false;
+    };
+    records.iter().any(|record| {
+        let role = record
+            .get("role")
+            .and_then(Value::as_str)
+            .unwrap_or_default();
+        record
+            .get("blocks")
+            .and_then(Value::as_array)
+            .is_some_and(|blocks| {
+                blocks.iter().any(|block| {
+                    let kind = block
+                        .get("kind")
+                        .and_then(Value::as_str)
+                        .unwrap_or_default();
+                    let has_text = block
+                        .get("text")
+                        .and_then(Value::as_str)
+                        .is_some_and(|text| !text.trim().is_empty());
+                    (kind == "source_context" && has_text)
+                        || (kind == "text" && matches!(role, "user" | "assistant") && has_text)
+                })
+            })
     })
 }
 
@@ -5693,7 +5726,42 @@ fn with_failed_restore_cleanup(
 #[allow(clippy::items_after_test_module)]
 mod tests {
     use super::*;
-    use std::process::Command;
+    use std::io::Write;
+    use std::process::{Command, Stdio};
+
+    #[test]
+    fn preview_marks_visible_messages_and_project_instructions_as_importable() {
+        let visible_message = json!({
+            "conversation": {"records": [{
+                "role": "assistant",
+                "blocks": [{"kind": "text", "text": "已完成检查"}]
+            }]}
+        });
+        let project_instruction = json!({
+            "conversation": {"records": [{
+                "role": "developer",
+                "blocks": [{"kind": "source_context", "text": "请使用中文"}]
+            }]}
+        });
+
+        assert!(handoff_has_importable_session(&visible_message));
+        assert!(handoff_has_importable_session(&project_instruction));
+    }
+
+    #[test]
+    fn preview_marks_tool_only_history_as_file_only() {
+        let tool_only = json!({
+            "conversation": {"records": [{
+                "role": "assistant",
+                "blocks": [
+                    {"kind": "tool_call", "call_id": "call-1", "tool_name": "read_file"},
+                    {"kind": "tool_result", "call_id": "call-1", "content": [{"kind": "text", "text": "README"}]}
+                ]
+            }]}
+        });
+
+        assert!(!handoff_has_importable_session(&tool_only));
+    }
 
     fn default_request(output_path: &Path) -> ExportRelaypackRequest {
         ExportRelaypackRequest {
@@ -5850,6 +5918,88 @@ mod tests {
             String::from_utf8_lossy(&output.stderr)
         );
         String::from_utf8_lossy(&output.stdout).trim().to_owned()
+    }
+
+    fn build_go_acceptance_binary(directory: &Path, name: &str, package: &str) -> PathBuf {
+        let adapter_root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../adapter");
+        let output_path = directory.join(name);
+        let output = Command::new("go")
+            .args(["build", "-o"])
+            .arg(&output_path)
+            .arg(package)
+            .current_dir(adapter_root)
+            .env("GOWORK", "off")
+            .output()
+            .unwrap();
+        assert!(
+            output.status.success(),
+            "building {name} failed: {}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        output_path
+    }
+
+    fn run_json_sidecar(
+        executable: &Path,
+        input: &[u8],
+        environment: &[(&str, &Path)],
+    ) -> Vec<Value> {
+        let mut command = Command::new(executable);
+        command
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped());
+        for (name, value) in environment {
+            command.env(name, value);
+        }
+        let mut child = command.spawn().unwrap();
+        child.stdin.as_mut().unwrap().write_all(input).unwrap();
+        let output = child.wait_with_output().unwrap();
+        assert!(
+            output.status.success(),
+            "{} failed: {}",
+            executable.display(),
+            String::from_utf8_lossy(&output.stderr)
+        );
+        String::from_utf8(output.stdout)
+            .unwrap()
+            .lines()
+            .filter(|line| !line.trim().is_empty())
+            .map(|line| serde_json::from_str(line).unwrap())
+            .collect()
+    }
+
+    fn create_acceptance_codex_state(home: &Path) {
+        fs::create_dir_all(home).unwrap();
+        let state_path = home.join("state_5.sqlite");
+        let schema = r#"CREATE TABLE threads (
+            id TEXT PRIMARY KEY,
+            rollout_path TEXT NOT NULL,
+            created_at INTEGER NOT NULL,
+            updated_at INTEGER NOT NULL,
+            source TEXT NOT NULL,
+            model_provider TEXT NOT NULL,
+            cwd TEXT NOT NULL,
+            title TEXT NOT NULL,
+            sandbox_policy TEXT NOT NULL,
+            approval_mode TEXT NOT NULL,
+            first_user_message TEXT NOT NULL DEFAULT '',
+            preview TEXT NOT NULL DEFAULT '',
+            recency_at INTEGER NOT NULL DEFAULT 0,
+            history_mode TEXT NOT NULL DEFAULT 'legacy',
+            name TEXT,
+            is_pinned INTEGER NOT NULL DEFAULT 0
+        );"#;
+        let output = Command::new("sqlite3")
+            .arg(&state_path)
+            .arg(schema)
+            .output()
+            .unwrap();
+        assert!(
+            output.status.success(),
+            "creating ChatGPT acceptance state failed: {}",
+            String::from_utf8_lossy(&output.stderr)
+        );
     }
 
     fn git_succeeds(directory: &Path, args: &[&str]) -> bool {
@@ -7969,6 +8119,161 @@ mod tests {
         })
         .unwrap_err();
         assert_eq!(error.code, "target_exists");
+    }
+
+    #[test]
+    #[ignore = "cross-component acceptance builds the Go sidecars"]
+    fn relaypack_restore_import_and_rediscovery_use_temporary_agent_homes() {
+        let temp = tempfile::tempdir().unwrap();
+        let package = temp.path().join("native-round-trip.relaypack");
+        let request = default_request(&package);
+        let exported = export_from_preview(request, adapter_preview(sample_messages(), "complete"));
+        let target = temp.path().join("received");
+        let restored = restore_relaypack(RestoreRelaypackRequest {
+            package_path: exported.package_path,
+            key: exported.key_fragment,
+            repository_path: None,
+            target_path: target.to_string_lossy().into_owned(),
+            branch_name: None,
+        })
+        .unwrap();
+
+        let codex_home = temp.path().join("codex-home");
+        let claude_home = temp.path().join("claude-home");
+        create_acceptance_codex_state(&codex_home);
+        let importer = build_go_acceptance_binary(
+            temp.path(),
+            "relay-session-importer",
+            "./cmd/relay-session-importer",
+        );
+        let adapter = build_go_acceptance_binary(
+            temp.path(),
+            "relay-agent-adapter",
+            "./cmd/relay-agent-adapter",
+        );
+
+        let codex_request = serde_json::to_vec(&json!({
+            "handoff_path": restored.handoff_json_path,
+            "target": "codex",
+            "target_cwd": restored.worktree_path,
+            "execute": true
+        }))
+        .unwrap();
+        let codex_response = run_json_sidecar(
+            &importer,
+            &codex_request,
+            &[("CODEX_HOME", codex_home.as_path())],
+        );
+        assert_eq!(codex_response.len(), 1);
+        assert_eq!(
+            codex_response[0].get("ok").and_then(Value::as_bool),
+            Some(true)
+        );
+        let codex_id = codex_response[0]
+            .pointer("/result/session_id")
+            .and_then(Value::as_str)
+            .unwrap()
+            .to_owned();
+
+        let claude_request = serde_json::to_vec(&json!({
+            "handoff_path": restored.handoff_json_path,
+            "target": "claude_code",
+            "target_cwd": restored.worktree_path,
+            "execute": true
+        }))
+        .unwrap();
+        let claude_response = run_json_sidecar(
+            &importer,
+            &claude_request,
+            &[("CLAUDE_CONFIG_DIR", claude_home.as_path())],
+        );
+        assert_eq!(claude_response.len(), 1);
+        assert_eq!(
+            claude_response[0].get("ok").and_then(Value::as_bool),
+            Some(true)
+        );
+        let claude_id = claude_response[0]
+            .pointer("/result/session_id")
+            .and_then(Value::as_str)
+            .unwrap()
+            .to_owned();
+
+        let adapter_input = [
+            json!({
+                "id": "discover",
+                "method": "discover_sessions",
+                "params": {
+                    "codex_home": codex_home,
+                    "claude_home": claude_home,
+                    "limit": 20
+                }
+            }),
+            json!({
+                "id": "inspect-codex",
+                "method": "inspect_session",
+                "params": {
+                    "agent": "codex",
+                    "session_id": codex_id,
+                    "codex_home": codex_home,
+                    "claude_home": claude_home
+                }
+            }),
+            json!({
+                "id": "inspect-claude",
+                "method": "inspect_session",
+                "params": {
+                    "agent": "claude_code",
+                    "session_id": claude_id,
+                    "codex_home": codex_home,
+                    "claude_home": claude_home
+                }
+            }),
+        ]
+        .into_iter()
+        .map(|request| serde_json::to_string(&request).unwrap())
+        .collect::<Vec<_>>()
+        .join("\n")
+            + "\n";
+        let responses = run_json_sidecar(&adapter, adapter_input.as_bytes(), &[]);
+        assert_eq!(responses.len(), 3);
+        assert!(responses
+            .iter()
+            .all(|response| response.get("ok").and_then(Value::as_bool) == Some(true)));
+        let sessions = responses[0]
+            .pointer("/result/sessions")
+            .and_then(Value::as_array)
+            .unwrap();
+        assert_eq!(sessions.len(), 2);
+        assert!(sessions.iter().any(|session| {
+            session.get("session_id").and_then(Value::as_str) == Some(codex_id.as_str())
+                && session
+                    .get("title")
+                    .and_then(Value::as_str)
+                    .is_some_and(|title| title.starts_with("Continue Relay · Relay "))
+        }));
+        assert!(sessions.iter().any(|session| {
+            session.get("session_id").and_then(Value::as_str) == Some(claude_id.as_str())
+                && session
+                    .get("title")
+                    .and_then(Value::as_str)
+                    .is_some_and(|title| title.starts_with("Continue Relay · Relay "))
+        }));
+        assert_eq!(
+            responses[1]
+                .pointer("/result/session/tool_call_count")
+                .and_then(Value::as_u64),
+            Some(1)
+        );
+        assert_eq!(
+            responses[1]
+                .pointer("/result/session/tool_result_count")
+                .and_then(Value::as_u64),
+            Some(1)
+        );
+        let claude_inspection = serde_json::to_string(&responses[2]).unwrap();
+        assert!(claude_inspection.contains("Relay 历史工具调用"));
+        assert!(claude_inspection.contains("Relay 历史工具结果"));
+        assert!(claude_inspection.contains(&restored.worktree_path));
     }
 }
 

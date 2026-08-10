@@ -286,52 +286,39 @@ describe("Relay share Worker", () => {
     expect(new Uint8Array(await download.arrayBuffer())).toEqual(ciphertext);
   });
 
-  it("accepts the direct ciphertext POST contract", async () => {
-    const ciphertext = new TextEncoder().encode("direct encrypted relay package");
-    const response = await miniflare.dispatchFetch("https://share.example.test/v1/shares", {
-      method: "POST",
-      headers: {
-        Authorization: "Bearer test-service-upload-token",
-        "Content-Type": "application/octet-stream",
-        "Content-Length": String(ciphertext.byteLength),
-        "X-Relay-Bytes": String(ciphertext.byteLength),
-        "X-Relay-Sha256": sha256(ciphertext),
-        "X-Relay-TTL": "600",
-        Origin: allowedOrigin,
-        "CF-Connecting-IP": "203.0.113.20",
-      },
-      body: ciphertext,
-    });
-    expect(response.status).toBe(201);
-    const created = await response.json() as CreatedShare & { blob_url: string };
-    expect(created.share_id).toMatch(/^[A-Za-z0-9_-]{32}$/u);
-    expect(created.share_url).toBe(`https://share.example.test/s/v1/${created.share_id}`);
-    expect(created.upload_token).toBeUndefined();
-    expect(created.revoke_token).toMatch(/^[A-Za-z0-9_-]{43}$/u);
-
-    const downloaded = await miniflare.dispatchFetch(created.blob_url, {
-      headers: { "CF-Connecting-IP": "203.0.113.20" },
-    });
-    expect(downloaded.status).toBe(200);
-    expect(new Uint8Array(await downloaded.arrayBuffer())).toEqual(ciphertext);
-  });
-
   it("requires the configured service upload token", async () => {
     const ciphertext = new TextEncoder().encode("protected ciphertext");
     const response = await miniflare.dispatchFetch("https://share.example.test/v1/shares", {
       method: "POST",
       headers: {
-        "Content-Type": "application/octet-stream",
-        "Content-Length": String(ciphertext.byteLength),
-        "X-Relay-Bytes": String(ciphertext.byteLength),
-        "X-Relay-Sha256": sha256(ciphertext),
+        "Content-Type": "application/json",
         "CF-Connecting-IP": "203.0.113.21",
       },
-      body: ciphertext,
+      body: JSON.stringify({
+        ciphertext_bytes: ciphertext.byteLength,
+        ciphertext_sha256: sha256(ciphertext),
+      }),
     });
     expect(response.status).toBe(401);
     expect(await response.json()).toMatchObject({
       error: { code: "service_upload_token_required" },
+    });
+  });
+
+  it("rejects the removed direct ciphertext POST contract", async () => {
+    const ciphertext = new TextEncoder().encode("old direct upload");
+    const response = await miniflare.dispatchFetch("https://share.example.test/v1/shares", {
+      method: "POST",
+      headers: {
+        Authorization: "Bearer test-service-upload-token",
+        "Content-Type": "application/octet-stream",
+        "CF-Connecting-IP": "203.0.113.22",
+      },
+      body: ciphertext,
+    });
+    expect(response.status).toBe(415);
+    expect(await response.json()).toMatchObject({
+      error: { code: "unsupported_media_type" },
     });
   });
 
@@ -408,11 +395,13 @@ describe("Relay share Worker", () => {
     );
     expect(response.status).toBe(200);
     const html = await response.text();
-    expect(html).toContain("分享包的解密在当前浏览器中完成");
-    expect(html).toContain("页面代码理论上可以读取地址中的密钥");
-    expect(html).toContain("此页面只连接当前分享服务器，不连接第三方服务");
-    expect(html).toContain("恢复 Git 修改、创建本机工作目录或打开新的 ChatGPT 任务");
-    expect(html).toContain("工具记录仅供查看，不会执行");
+    expect(html).toContain("正在验证链接并读取内容");
+    expect(html).toContain("此链接可以查看分享内容，请不要转发给无关人员");
+    expect(html).toContain("下载分享文件并用 Relay 打开后，可以保存发送者选择的文件，并导入到 ChatGPT 或 Claude Code");
+    expect(html).toContain("工具记录只供阅读，不会运行");
+    expect(html).toContain("复制项目说明");
+    expect(html).not.toContain("下载 HANDOFF.md");
+    expect(html).not.toContain("解密密钥位于");
     expect(html).not.toContain(key);
     expect(html).toContain("<script nonce=");
     expect(html).toContain("location.hash");
@@ -444,19 +433,6 @@ describe("Relay share Worker", () => {
     expect(response.headers.get("content-security-policy")).toContain("connect-src 'self'");
   });
 
-  it("redirects legacy receiver paths without copying a fragment into Location", async () => {
-    const shareId = "b".repeat(32);
-    const key = "L".repeat(43);
-    const response = await miniflare.dispatchFetch(
-      `https://share.example.test/s/${shareId}#k=${key}`,
-      { redirect: "manual" },
-    );
-    expect(response.status).toBe(308);
-    expect(response.headers.get("location")).toBe(`https://share.example.test/s/v1/${shareId}`);
-    expect(response.headers.get("location")).not.toContain("#");
-    expect(response.headers.get("location")).not.toContain(key);
-  });
-
   it("accepts receiver routes only for 32-character share IDs", async () => {
     const valid = await miniflare.dispatchFetch(
       `https://share.example.test/s/v1/${"c".repeat(32)}`,
@@ -467,11 +443,7 @@ describe("Relay share Worker", () => {
       const canonical = await miniflare.dispatchFetch(
         `https://share.example.test/s/v1/${invalidId}`,
       );
-      const legacy = await miniflare.dispatchFetch(`https://share.example.test/s/${invalidId}`, {
-        redirect: "manual",
-      });
       expect(canonical.status).toBe(404);
-      expect(legacy.status).toBe(404);
     }
   });
 

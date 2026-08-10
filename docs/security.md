@@ -102,7 +102,7 @@ URL fragment 不是身份认证。完整链接本身就是解密凭据，任何�
 
 待上传记录会显示在分享记录页。上传中断后，本机仍有撤销和重试所需的凭据；相同令牌、长度和摘要可以安全重试。包仍在且长度、摘要未变时可以继续，包丢失或改变时只能撤销。转为 `active` 后，每条分享自己的上传令牌会从本机记录中删除。
 
-Worker 给预留设置短期上传期限，默认 900 秒，并让 Durable Object 为 upload deadline 设置 alarm。未完成的预留以及已经写入 R2 但未完成确认的对象会在期限到达后清理；R2 删除暂时失败时，alarm 会再次运行。旧版 `application/octet-stream` direct POST 仅作为兼容接口保留，新版桌面端不会自动退回。
+Worker 给预留设置短期上传期限，默认 900 秒，并让 Durable Object 为 upload deadline 设置 alarm。未完成的预留以及已经写入 R2 但未完成确认的对象会在期限到达后清理；R2 删除暂时失败时，alarm 会再次运行。
 
 ## 本机分享记录
 
@@ -114,7 +114,7 @@ Worker 给预留设置短期上传期限，默认 900 秒，并让 Durable Objec
 - 启动时检查 `.record.*.tmp` 和待上传凭据的临时文件：能确认完整的记录会恢复，损坏记录会移到隔离目录，仍被另一个进程锁定的活动文件会跳过。
 - macOS 上给分享记录目录写入并回读 Time Machine 排除属性，避免撤销令牌进入普通系统备份。
 
-旧版单文件历史会移到新目录中作为私有迁移备份，不会因为旧文件存在而阻止新的上传。旧客户端的 direct POST 只是兼容接口；新版两步上传不使用这条路径。
+旧版单文件历史会移到新目录中作为私有迁移备份，不会因为旧文件存在而阻止新的上传。
 
 ## 接收包的处理顺序
 
@@ -127,7 +127,8 @@ Worker 给预留设置短期上传期限，默认 900 秒，并让 Durable Objec
 5. 验证每个资产的 SHA-256，并检查所有 `asset_id`、`call_id` 和记录引用。
 6. 展示预览和警告，等待用户确认。
 7. 有 Git 内容时创建新 worktree，并按安全顺序恢复 Git 数据；纯会话包创建新的普通文件夹，只写固定名称的交接文件。
-8. 完成状态比较后才允许启动 Agent。
+8. 完成状态比较后，用户才能选择只保存文件或新增一条原生会话。没有可见聊天或项目说明时，只允许保存文件，不创建空会话。
+9. 原生会话导入完成后，检查会话文件、索引、ChatGPT SQLite 记录和置顶状态；检查失败时只撤销本次新增内容。
 
 任何一步失败都不能“尽量导入剩余文件”。接收端可以保留不含明文的错误信息，但失败后的解密临时目录应安全清理。
 
@@ -183,17 +184,23 @@ Relay 不自动下载 LFS 对象。仓库存在 LFS 规则、但 HEAD、index、
 
 untracked symlink 和包内 symlink 一律拒绝。对于基准提交中已有的 tracked symlink，Relay 可以在预览中列出，但后续写补丁和 untracked 文件时不得跟随它，也不得把它当作目录。
 
-## 深链接和启动 Agent
+## 原生会话导入和 ChatGPT 打开方式
 
 Relay 分享使用 HTTPS 链接。链接只包含服务 origin、分享 ID 和 fragment 中的密钥，不携带 shell 命令、目标目录或 Agent 参数。接收者在 Relay 中导入链接并确认恢复位置，不能把 URL 内容拼成 shell 字符串。
 
-启动 Agent 时使用参数数组，不经过 shell。工作目录固定为 Relay 新建的 worktree 或普通交接文件夹，交接文件由 Relay 创建并设为只读。提示文本是固定模板加本地路径，不包含从链接直接传来的命令。
+会话导入器只接收经过校验且位于恢复目录内的 `handoff.json`。它不会读取包外的发送方原生会话，也不会复制私有推理、登录状态、凭据或厂商隐藏记录。ChatGPT 新任务通过原生标题事件、任务索引和 SQLite 的自定义名称字段保存带导入时间与短 ID 的唯一标题，标题不会伪装成用户消息；第一条可见消息仍来自发送者允许分享的内容，只有历史从助手或工具记录开始时才加入 Relay 的阅读说明。历史工具调用会写成已经完成的记录或带有“不得自动重新执行”说明的普通文本，不进入执行队列。
 
-Claude Code 启动前后都会运行 `claude agents --json --all --cwd <工作目录>`。Relay 只有在启动后找到一个此前不存在、类型为 background、目录匹配且开始时间合理的新会话 ID 时，才返回 `VERIFIED`；同时保留 Claude 报告的 `working`、`blocked` 等状态和可用的等待原因。仅仅看到 `claude --bg` 进程成功退出不算验证通过。
+`HANDOFF.md` 和 `handoff.json` 不是正常继续开发的主要入口。它们只用于浏览器阅读、接收方未安装 Relay 或原生会话导入失败时备用。
 
-ChatGPT 使用两种 `codex://` URL。Relay 先用不含本机路径和提示的 `codex://threads/new` 查询 macOS 注册的处理应用，再用 Security.framework 检查 bundle ID `com.openai.codex`、OpenAI Team ID、嵌套代码和所有架构。只有候选应用通过固定签名要求后，Relay 才构造含工作目录路径和提示的 `codex://new?path=...&prompt=...`，并明确指定 ChatGPT 打开。没有通过验证的应用时，Relay 拒绝发送本机路径，也不提供绕过选项。
+导入前会为目标 Agent 的索引、ChatGPT SQLite 与桌面状态文件创建仅当前用户可读的备份。所有会话文件使用排他新建，不允许覆盖。ChatGPT 任务索引使用追加写入，SQLite 使用 `BEGIN IMMEDIATE` 事务；桌面状态文件只修改 `pinned-thread-ids`，写入前重新检查文件没有变化；Claude Code 索引通过同目录临时文件替换。导入步骤失败时，只按新会话 ID 删除本次新增的文件、索引项、SQLite 行和置顶项，不处理已有会话。
 
-macOS 的完成回调只能证明打开请求已交给通过验证的 ChatGPT 应用。返回状态因此是 `OPEN_REQUESTED`，不表示新任务已经创建；`prompt` 只是预填输入框，仍需用户点击发送。
+Claude Code 导入成功后只返回参数数组 `claude --resume <新会话 ID>`，Relay 不经 shell 执行，也不擅自选择用户的终端。
+
+ChatGPT 导入完成后，Relay 先用不含本机路径和提示的 `codex://threads/new` 查询 macOS 注册的处理应用，再用 Security.framework 检查 bundle ID `com.openai.codex`、OpenAI Team ID、嵌套代码和所有架构。只有候选应用通过固定签名要求后，Relay 才打开 `codex://threads/<新任务 ID>`。没有通过验证的应用时，新任务仍保留在本机任务列表，但 Relay 不把打开请求交给该应用。
+
+macOS 的完成回调只能证明打开请求已交给通过验证的 ChatGPT 应用。任务是否已写入本机历史，由导入后的会话文件、任务索引、SQLite 记录和置顶状态共同检查，不依赖打开回调。Relay 会先等待运行中的 ChatGPT 读取新增记录，再发送任务链接；界面只说明已经发送打开请求，不把系统回调当作页面已经显示。若首次打开时 ChatGPT 尚未读到任务，用户可以再次发送打开请求，不会重复导入或写入任务。`state_5.sqlite` 不存在时不会降级为只写 JSONL，用户需要先打开一次 ChatGPT，让应用建立本机任务数据库。
+
+置顶检查确认的是磁盘中的 `pinned-thread-ids`。如果 ChatGPT 在导入前已经打开，当前进程可能不会立即重新读取外部改动；Relay 仍会直接打开新任务，置顶状态会在 ChatGPT 下次重新载入任务列表时出现。
 
 ## 日志和诊断
 
@@ -208,6 +215,6 @@ macOS 的完成回调只能证明打开请求已交给通过验证的 ChatGPT �
 
 ## 仍需发行前确认
 
-包加密、HTTPS 密文分享、路径检查、Git 恢复和 Agent 启动已经有实现与自动测试，但这不等于发行版已经通过安全检查。正式发布前仍需完成应用签名、公证、正式域名和安装包测试，并按 [v0.1-acceptance.md](v0.1-acceptance.md) 记录恶意输入、接近 32 MiB 的真实传输、ChatGPT 签名检查和 Claude 后台会话验证结果。
+包加密、HTTPS 密文分享、路径检查、Git 恢复和原生会话导入已经有实现与自动测试，但这不等于发行版已经通过安全检查。正式发布前仍需完成应用签名、公证、正式域名和安装包测试，并按 [v0.1-acceptance.md](v0.1-acceptance.md) 记录恶意输入、接近 32 MiB 的真实传输、ChatGPT 签名检查和 Claude Code 原生会话验证结果。
 
 当前明确保留的限制包括外部进程并发修改 `info/exclude` 时的路径级窗口。外部 `claude.ai` 或 ChatGPT 厂商网页分享链接也不能当作完整 Relay 包，而且这些厂商链接的导入目前尚未实现；当前支持范围见 [provider-share-links.md](provider-share-links.md)。

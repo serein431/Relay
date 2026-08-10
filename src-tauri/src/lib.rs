@@ -1,6 +1,7 @@
 mod adapter;
+mod chatgpt;
 mod git;
-mod launch;
+mod native_import;
 mod process;
 mod relaypack;
 mod sensitive;
@@ -11,12 +12,13 @@ mod types;
 pub use types::{
     AdapterHealth, CommandError, DiscoverSessionsRequest, DiscoverSessionsResult,
     DownloadShareRequest, DownloadShareResult, EnvironmentStatus, ExcludedContentBlock,
-    ExportRelaypackRequest, ExportRelaypackResult, InspectRelaypackResult, LaunchAgentRequest,
-    LaunchAgentResult, ListShareHistoryResult, PreviewSessionRequest, RelaypackDiagnosticPreview,
-    RelaypackPreview, RepositoryInspection, RestoreRelaypackRequest, RestoreRelaypackResult,
-    ResumeSavedShareUploadRequest, ResumeSavedShareUploadResult, RevokeSavedShareRequest,
-    RevokeSavedShareResult, RevokeShareRequest, RevokeShareResult, ShareHistoryRecord,
-    ShareHistoryStatus, UploadShareRequest, UploadShareResult,
+    ExportRelaypackRequest, ExportRelaypackResult, ImportNativeSessionRequest,
+    ImportNativeSessionResult, InspectRelaypackResult, ListShareHistoryResult,
+    PreviewSessionRequest, RelaypackDiagnosticPreview, RelaypackPreview, RepositoryInspection,
+    RestoreRelaypackRequest, RestoreRelaypackResult, ResumeSavedShareUploadRequest,
+    ResumeSavedShareUploadResult, RevokeSavedShareRequest, RevokeSavedShareResult,
+    RevokeShareRequest, RevokeShareResult, ShareHistoryRecord, ShareHistoryStatus,
+    UploadShareRequest, UploadShareResult,
 };
 
 use crate::process::find_executable_on_path;
@@ -209,6 +211,32 @@ async fn restore_relaypack(
 }
 
 #[tauri::command]
+async fn import_native_session(
+    request: ImportNativeSessionRequest,
+) -> Result<ImportNativeSessionResult, CommandError> {
+    tauri::async_runtime::spawn_blocking(move || native_import::import_native_session(request))
+        .await
+        .map_err(|error| {
+            CommandError::new(
+                "background_task_failed",
+                format!("native session import task failed: {error}"),
+            )
+        })?
+}
+
+#[tauri::command]
+async fn open_imported_chatgpt_task(session_id: String) -> Result<(), CommandError> {
+    tauri::async_runtime::spawn_blocking(move || chatgpt::open_imported_task(&session_id))
+        .await
+        .map_err(|error| {
+            CommandError::new(
+                "background_task_failed",
+                format!("ChatGPT open task failed: {error}"),
+            )
+        })?
+}
+
+#[tauri::command]
 async fn upload_share(
     app: tauri::AppHandle,
     request: UploadShareRequest,
@@ -394,18 +422,6 @@ async fn revoke_share(request: RevokeShareRequest) -> Result<RevokeShareResult, 
         })?
 }
 
-#[tauri::command]
-async fn launch_agent(request: LaunchAgentRequest) -> Result<LaunchAgentResult, CommandError> {
-    tauri::async_runtime::spawn_blocking(move || launch::launch_agent(request))
-        .await
-        .map_err(|error| {
-            CommandError::new(
-                "background_task_failed",
-                format!("Agent launch task failed: {error}"),
-            )
-        })?
-}
-
 fn tool_status(name: &str) -> ToolStatus {
     let path = find_executable_on_path(name);
     ToolStatus {
@@ -478,6 +494,7 @@ fn add_command_error_details(
 pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_clipboard_manager::init())
+        .plugin(tauri_plugin_dialog::init())
         .invoke_handler(tauri::generate_handler![
             environment_status,
             adapter_health,
@@ -487,13 +504,14 @@ pub fn run() {
             export_relaypack,
             inspect_relaypack,
             restore_relaypack,
+            import_native_session,
+            open_imported_chatgpt_task,
             upload_share,
             resume_saved_share_upload,
             list_share_history,
             revoke_saved_share,
             download_share,
-            revoke_share,
-            launch_agent
+            revoke_share
         ])
         .run(tauri::generate_context!())
         .expect("error while running Relay");

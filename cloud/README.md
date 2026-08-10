@@ -18,7 +18,7 @@ https://share.example.com/s/v1/SHARE_ID#k=BASE64URL_32_BYTE_KEY
 
 API 返回的 `share_url` 不带密钥。桌面客户端生成 32 字节随机密钥后，必须以 `#k=` 加 43 个 base64url 字符的形式附在链接末尾。分享 ID 仍由 24 个随机字节生成，编码后严格为 32 个 base64url 字符。
 
-HTTP 请求不会把 `#` 及其后面的内容发给服务端。`/s/v1/:id` 是浏览器接收页：页面脚本读取 fragment 中的密钥，只请求同源的 `/v1/shares/:id` 和 `/v1/shares/:id/blob`，并在浏览器中完成摘要检查、AES-256-GCM 解密、zstd 解压和分享包检查。页面不连接第三方服务。旧 `/s/:id` 路径只做 308 跳转，`Location` 不包含 fragment。
+HTTP 请求不会把 `#` 及其后面的内容发给服务端。`/s/v1/:id` 是浏览器接收页：页面脚本读取 fragment 中的密钥，只请求同源的 `/v1/shares/:id` 和 `/v1/shares/:id/blob`，并在浏览器中完成摘要检查、AES-256-GCM 解密、zstd 解压和分享包检查。页面不连接第三方服务。
 
 虽然服务端请求看不到 fragment，但服务端返回的页面代码理论上可以读取它。生产部署必须保证 Worker 代码、构建产物和发布流程可信，也不能加载第三方脚本、字体、图片或分析服务。高敏感内容应优先使用桌面应用，并把 `.relaypack` 与密钥分开传递。
 
@@ -67,46 +67,13 @@ X-Relay-Ciphertext-Sha256: 64 位十六进制 SHA-256
 
 预留时 Durable Object 会为上传期限设置 alarm。若上传没有完成，或 Worker 写入 R2 后未能完成状态更新，upload deadline 到达后 alarm 会删除 Durable Object 状态和可能存在的 R2 对象；R2 删除暂时失败时会再次设置 alarm。桌面端在上传中断后仍保留 `pending_upload`，只要本机包仍存在且长度、摘要未变，就可以继续；否则只能撤销。
 
-如果部署时设置了 `UPLOAD_TOKEN` secret，JSON 预留和下述兼容接口都必须带：
+如果部署时设置了 `UPLOAD_TOKEN` secret，JSON 预留请求必须带：
 
 ```http
 Authorization: Bearer SERVICE_UPLOAD_TOKEN
 ```
 
-它只保护创建和上传。公开元数据、下载和接收页面不要求登录。
-
-### 兼容接口：旧客户端 direct POST
-
-```http
-POST /v1/shares
-Content-Type: application/octet-stream
-Content-Length: 12345
-X-Relay-Bytes: 12345
-X-Relay-Sha256: 64 位十六进制 SHA-256
-X-Relay-TTL: 604800
-
-<ciphertext>
-```
-
-`X-Relay-TTL` 可省略，默认 7 天，最大 30 天。默认密文上限是 32 MiB。服务端核对 `Content-Length`、`X-Relay-Bytes` 和 R2 计算的 SHA-256。上传通过 Worker 流式写入 R2，不把整个包放进 Worker 内存。
-
-成功响应包含撤销令牌：
-
-```json
-{
-  "schema": "relay.share.created.v1",
-  "share_id": "...",
-  "share_url": "https://share.example.com/s/v1/...",
-  "metadata_url": "https://share.example.com/v1/shares/...",
-  "blob_url": "https://share.example.com/v1/shares/.../blob",
-  "expires_at": "2026-08-14T10:00:00.000Z",
-  "revoke_token": "..."
-}
-```
-
-对象 ID、R2 key 和撤销令牌分别生成。Durable Object 只保存撤销令牌的带用途 SHA-256，不保存原值。
-
-这条 direct POST 只作为旧客户端的兼容接口。它在服务端内部仍使用预留、授权、流式写 R2 和完成确认这套流程；新版 Relay 桌面端不会自动退回该接口。
+它只限制创建分享。后续 PUT 使用每条分享自己的上传令牌；公开元数据、下载和接收页面不要求登录。
 
 ### 2. 查询和下载
 
@@ -146,11 +113,11 @@ npm run dev
 - Worker 向 Durable Object 发没有正文的授权与完成请求，并把公开 PUT 正文流式写入 R2。
 - 未完成预留的短期过期与清理。
 - 上传、公开元数据和下载。
-- 兼容用 direct POST 和可选的服务上传令牌。
+- JSON 预留请求和可选的服务上传令牌。
 - 密文字节与 SHA-256 不符。
 - 自动过期和 R2 删除。
 - 错误撤销令牌、正确撤销和撤销后下载失败。
-- 接收页没有脚本，不读取 fragment，不发网络请求；CSP 同时禁止脚本和连接。
+- 接收页只运行带随机 nonce 的内置脚本，只连接同源接口，并由 CSP 禁止第三方脚本和连接。
 - 拒绝多余项目元数据和 query 中的秘密。
 
 ## 部署

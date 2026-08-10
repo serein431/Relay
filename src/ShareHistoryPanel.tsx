@@ -1,5 +1,6 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useState } from "react";
 import { copyText } from "./lib/clipboard";
+import { userErrorMessage } from "./lib/errors";
 import {
   listShareHistory,
   resumeSavedShareUpload,
@@ -12,21 +13,6 @@ type ShareHistoryPanelProps = {
   onNotice: (message: string) => void;
 };
 
-function errorMessage(error: unknown): string {
-  if (error instanceof Error) return error.message;
-  if (typeof error === "string") return error;
-  if (typeof error === "object" && error !== null && "message" in error) {
-    return String((error as { message: unknown }).message);
-  }
-  return String(error);
-}
-
-function formatBytes(value: number): string {
-  if (value < 1024) return `${value} B`;
-  if (value < 1024 * 1024) return `${(value / 1024).toFixed(1)} KB`;
-  return `${(value / (1024 * 1024)).toFixed(1)} MB`;
-}
-
 function formatDate(value: string): string {
   const time = new Date(value);
   return Number.isNaN(time.getTime()) ? value : time.toLocaleString("zh-CN");
@@ -35,11 +21,6 @@ function formatDate(value: string): string {
 function isExpired(record: ShareHistoryRecord): boolean {
   const time = new Date(record.expires_at).getTime();
   return !Number.isNaN(time) && time <= Date.now();
-}
-
-function displayLink(value: string): string {
-  const fragment = value.indexOf("#k=");
-  return fragment < 0 ? value : `${value.slice(0, fragment)}#k=••••••••`;
 }
 
 function statusOf(record: ShareHistoryRecord): {
@@ -69,6 +50,7 @@ export default function ShareHistoryPanel({
   const [revoking, setRevoking] = useState<string | null>(null);
   const [resuming, setResuming] = useState<string | null>(null);
   const [confirming, setConfirming] = useState<string | null>(null);
+  const [manualCopy, setManualCopy] = useState<string | null>(null);
   const [reloadKey, setReloadKey] = useState(0);
 
   useEffect(() => {
@@ -80,7 +62,7 @@ export default function ShareHistoryPanel({
         if (active) setRecords(result.records);
       })
       .catch((caught) => {
-        if (active) setError(errorMessage(caught));
+        if (active) setError(userErrorMessage(caught, "无法读取分享记录，请稍后重试。"));
       })
       .finally(() => {
         if (active) setLoading(false);
@@ -90,26 +72,14 @@ export default function ShareHistoryPanel({
     };
   }, [refreshKey, reloadKey]);
 
-  const counts = useMemo(() => {
-    let active = 0;
-    let pending = 0;
-    let expired = 0;
-    let revoked = 0;
-    for (const record of records) {
-      if (record.status === "revoked") revoked += 1;
-      else if (record.status === "pending_upload") pending += 1;
-      else if (isExpired(record)) expired += 1;
-      else active += 1;
-    }
-    return { active, pending, expired, revoked };
-  }, [records]);
-
   const copy = async (record: ShareHistoryRecord) => {
+    setManualCopy(null);
     try {
       await copyText(record.share_url);
-      onNotice("完整分享链接已复制。");
+      onNotice("分享链接已复制。");
     } catch {
-      onNotice("复制失败，请手动选择链接复制。");
+      setManualCopy(record.share_id);
+      onNotice("自动复制失败，请在当前记录中手动复制链接。");
     }
   };
 
@@ -120,6 +90,7 @@ export default function ShareHistoryPanel({
     }
     setRevoking(record.share_id);
     setConfirming(null);
+    setManualCopy(null);
     setError(null);
     try {
       const result = await revokeSavedShare({ share_id: record.share_id });
@@ -128,9 +99,9 @@ export default function ShareHistoryPanel({
           item.share_id === result.record.share_id ? result.record : item,
         ),
       );
-      onNotice("这个分享已经撤销，原链接不能再下载密文包。");
+      onNotice("分享已撤销，旧链接不能再打开分享内容。");
     } catch (caught) {
-      setError(errorMessage(caught));
+      setError(userErrorMessage(caught, "无法撤销分享链接，请稍后重试。"));
     } finally {
       setRevoking(null);
     }
@@ -139,6 +110,7 @@ export default function ShareHistoryPanel({
   const resume = async (record: ShareHistoryRecord) => {
     setResuming(record.share_id);
     setConfirming(null);
+    setManualCopy(null);
     setError(null);
     try {
       const result = await resumeSavedShareUpload({ share_id: record.share_id });
@@ -149,12 +121,13 @@ export default function ShareHistoryPanel({
       );
       try {
         await copyText(result.record.share_url);
-        onNotice("密文已经上传，完整分享链接已复制。");
+        onNotice("文件已上传，分享链接已复制。");
       } catch {
-        onNotice("密文已经上传。自动复制失败，请点击“复制链接”。");
+        setManualCopy(result.record.share_id);
+        onNotice("文件已上传。自动复制失败，请在当前记录中手动复制链接。");
       }
     } catch (caught) {
-      setError(errorMessage(caught));
+      setError(userErrorMessage(caught, "无法继续上传，请稍后重试。"));
     } finally {
       setResuming(null);
     }
@@ -162,36 +135,9 @@ export default function ShareHistoryPanel({
 
   return (
     <section className="share-history-shell">
-      <aside className="share-history-sidebar">
-        <div className="pane-heading">
-          <div>
-            <span className="eyebrow">本机记录</span>
-            <h2>分享记录</h2>
-          </div>
-          <span className="count-chip">{records.length}</span>
-        </div>
-
-        <div className="history-counts">
-          <div><strong>{counts.active}</strong><span>可使用</span></div>
-          <div><strong>{counts.pending}</strong><span>待上传</span></div>
-          <div><strong>{counts.expired}</strong><span>已到期</span></div>
-          <div><strong>{counts.revoked}</strong><span>已撤销</span></div>
-        </div>
-
-        <div className="history-security-note">
-          <strong>撤销令牌留在本机</strong>
-          <p>Relay 会先保存上传与撤销凭据，再传密文。中断后可以从这里继续或撤销，文件权限为 0600。</p>
-          <p>这里不会写入 ~/.claude 或 ~/.codex。</p>
-        </div>
-      </aside>
-
       <main className="share-history-main">
         <header className="history-heading">
-          <div>
-            <span className="eyebrow">加密分享链接</span>
-            <h1>已创建的分享链接</h1>
-            <p>可以重新复制仍然有效的链接，也可以用本机保存的撤销令牌立即停用。</p>
-          </div>
+          <h1>分享记录</h1>
           <button
             type="button"
             className="history-refresh"
@@ -204,9 +150,9 @@ export default function ShareHistoryPanel({
 
         {error ? (
           <div className="history-error">
-            <strong>分享记录暂时无法使用</strong>
+            <strong>无法读取分享记录</strong>
             <p>{error}</p>
-            <small>如果记录文件损坏，Relay 会停止写入，不会直接覆盖原文件。</small>
+            <small>已有分享不会因此失效。</small>
           </div>
         ) : null}
 
@@ -216,9 +162,8 @@ export default function ShareHistoryPanel({
 
         {!loading && !error && records.length === 0 ? (
           <div className="history-empty">
-            <span>00</span>
-            <h2>还没有分享记录</h2>
-            <p>先从一条项目会话生成 .relaypack，再上传为加密链接。</p>
+            <h2>还没有创建分享链接</h2>
+            <p>从会话页面选择一条会话并创建分享链接。</p>
           </div>
         ) : null}
 
@@ -240,39 +185,30 @@ export default function ShareHistoryPanel({
                     >
                       {record.project_name ?? "未命名项目"}
                     </span>
-                    <h2 title={record.project_title ?? "未命名交接"}>
-                      {record.project_title ?? "未命名交接"}
+                    <h2 title={record.project_title ?? "未命名会话"}>
+                      {record.project_title ?? "未命名会话"}
                     </h2>
                   </div>
                   <span className={`history-status ${status.className}`}>{status.label}</span>
                 </header>
 
-                <div className="history-link-row">
-                  <code>{displayLink(record.share_url)}</code>
-                  <button
-                    type="button"
-                    onClick={() => void copy(record)}
-                    disabled={!status.available}
-                  >
-                    {record.status === "pending_upload" ? "尚未上传" : "复制链接"}
-                  </button>
-                </div>
+                {manualCopy === record.share_id && status.available ? (
+                  <label className="history-manual-copy">
+                    <span>手动复制链接</span>
+                    <textarea
+                      readOnly
+                      value={record.share_url}
+                      onFocus={(event) => event.currentTarget.select()}
+                    />
+                  </label>
+                ) : null}
 
                 <dl className="history-metadata">
                   <div><dt>创建</dt><dd>{formatDate(record.created_at)}</dd></div>
                   <div><dt>到期</dt><dd>{formatDate(record.expires_at)}</dd></div>
-                  <div><dt>密文</dt><dd>{formatBytes(record.ciphertext_bytes)}</dd></div>
                 </dl>
 
-                <div className="history-package-row">
-                  <span className={record.package_exists ? "is-present" : "is-missing"}>
-                    {record.package_exists ? "本地包仍在" : "本地包已移动或删除"}
-                  </span>
-                  <code>{record.package_path}</code>
-                </div>
-
                 <footer>
-                  <code>ID {record.share_id}</code>
                   {record.status === "pending_upload" ? (
                     <div className="history-card-actions">
                       <button
@@ -280,7 +216,7 @@ export default function ShareHistoryPanel({
                         className="is-resume"
                         onClick={() => void resume(record)}
                         disabled={!record.package_exists || resuming !== null || isRevoking}
-                        title={record.package_exists ? undefined : "本地密文包已移动或删除，只能撤销"}
+                        title={record.package_exists ? undefined : "本地分享文件已移动或删除，只能撤销"}
                       >
                         {resuming === record.share_id ? "正在继续" : "继续上传"}
                       </button>
@@ -291,11 +227,18 @@ export default function ShareHistoryPanel({
                         onBlur={() => setConfirming((value) => value === record.share_id ? null : value)}
                         disabled={isRevoking || resuming !== null}
                       >
-                        {isRevoking ? "正在撤销" : isConfirming ? "再次点击确认" : "撤销"}
+                        {isRevoking ? "正在撤销" : isConfirming ? "确认撤销" : "撤销"}
                       </button>
                     </div>
                   ) : status.available ? (
                     <div className="history-card-actions">
+                      <button
+                        type="button"
+                        className="is-copy"
+                        onClick={() => void copy(record)}
+                      >
+                        复制链接
+                      </button>
                       <button
                         type="button"
                         className={isConfirming ? "is-confirming" : ""}
@@ -303,7 +246,7 @@ export default function ShareHistoryPanel({
                         onBlur={() => setConfirming((value) => value === record.share_id ? null : value)}
                         disabled={isRevoking || resuming !== null}
                       >
-                        {isRevoking ? "正在撤销" : isConfirming ? "再次点击确认" : "撤销链接"}
+                        {isRevoking ? "正在撤销" : isConfirming ? "确认撤销" : "撤销链接"}
                       </button>
                     </div>
                   ) : (

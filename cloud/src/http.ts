@@ -58,7 +58,7 @@ export function corsPreflight(request: Request, env: Env): Response {
       "Access-Control-Allow-Origin": allowed,
       "Access-Control-Allow-Methods": "GET, HEAD, POST, PUT, DELETE, OPTIONS",
       "Access-Control-Allow-Headers":
-        "authorization, content-type, x-relay-bytes, x-relay-ttl, x-relay-sha256, x-relay-ciphertext-sha256",
+        "authorization, content-type, x-relay-ciphertext-sha256",
       "Access-Control-Max-Age": "600",
       Vary: "Origin",
     },

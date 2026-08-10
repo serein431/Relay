@@ -8,7 +8,7 @@
     "build": "tsc --noEmit && vite build",
     "test:frontend": "vitest run src",
     "preview": "vite preview --host 127.0.0.1",
-    "adapter:build": "cd adapter && mkdir -p bin && go build -o bin/relay-agent-adapter ./cmd/relay-agent-adapter",
+    "adapter:build": "cd adapter && mkdir -p bin && go build -o bin/relay-agent-adapter ./cmd/relay-agent-adapter && go build -o bin/relay-session-importer ./cmd/relay-session-importer",
     "adapter:build:sidecar": "bash scripts/build-adapter-sidecar.sh",
     "adapter:check": "cd adapter && test -z \"$(gofmt -l .)\" && go test ./... && go vet ./...",
     "schema:check": "node scripts/validate-schema.mjs",
@@ -24,6 +24,7 @@
   "dependencies": {
     "@tauri-apps/api": "2.11.1",
     "@tauri-apps/plugin-clipboard-manager": "2.3.2",
+    "@tauri-apps/plugin-dialog": "2.7.2",
     "react": "19.2.8",
     "react-dom": "19.2.8"
   },

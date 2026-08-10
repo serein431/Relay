@@ -19,16 +19,32 @@ describe("分享链接界面", () => {
       <CloudShareActions pack={pack} onNotice={() => undefined} />,
     );
     expect(markup).toContain("有效期");
+    expect(markup).toContain("链接有效期内，任何持有者都可以查看分享内容");
     expect(markup).not.toContain("服务上传令牌");
     expect(markup).not.toContain("分享服务</span><input");
+  });
+
+  it("自动上传时不重复要求选择有效期，也不显示内部上传说明", () => {
+    const pack = {
+      package_path: "/tmp/example.relaypack",
+      key_fragment: "A".repeat(43),
+      preview: { title: "示例会话", project_name: "Relay" },
+    } as ExportRelaypackResult;
+    const markup = renderToStaticMarkup(
+      <CloudShareActions pack={pack} autoUpload onNotice={() => undefined} />,
+    );
+    expect(markup).toContain("正在准备分享链接");
+    expect(markup).not.toContain("<span>有效期</span>");
+    expect(markup).not.toContain("撤销凭据");
+    expect(markup).not.toContain("密文");
   });
 
   it("接收页从完整链接读取服务来源", () => {
     const markup = renderToStaticMarkup(
       <ReceivePanel home="/Users/demo" onNotice={() => undefined} />,
     );
-    expect(markup).toContain("完整分享链接");
-    expect(markup).toContain("粘贴 Relay 生成的完整分享链接");
+    expect(markup).toContain("分享链接");
+    expect(markup).toContain("粘贴 Relay 分享链接");
     expect(markup).not.toContain("可信分享服务");
     expect(markup).not.toContain("workers.dev");
     expect(

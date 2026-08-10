@@ -1,5 +1,4 @@
 import { invoke, isTauri } from "@tauri-apps/api/core";
-import { demoEnvironment, demoSessions } from "../mock";
 import type {
   AgentInstallation,
   AgentKind,
@@ -8,9 +7,9 @@ import type {
   DownloadShareResult,
   ExportRelaypackRequest,
   ExportRelaypackResult,
+  ImportNativeSessionRequest,
+  ImportNativeSessionResult,
   InspectRelaypackResult,
-  LaunchAgentRequest,
-  LaunchAgentResult,
   ListShareHistoryResult,
   PreviewSessionRequest,
   RepositoryInspection,
@@ -48,6 +47,9 @@ const defaultWorkspaceRuntime: WorkspaceRuntime = {
   isTauri,
   invoke: (command, args) => invoke<unknown>(command, args),
 };
+
+export const DEFAULT_SESSION_LIMIT = 250;
+export const EXPANDED_SESSION_LIMIT = 1_000;
 
 function isRecord(value: unknown): value is UnknownRecord {
   return typeof value === "object" && value !== null && !Array.isArray(value);
@@ -165,6 +167,20 @@ function normalizeSessions(value: unknown): SessionSummary[] {
     .filter((item): item is SessionSummary => item !== null);
 }
 
+function returnedSessionCandidateCount(value: unknown): number {
+  const sessionCount = Array.isArray(value)
+    ? value.length
+    : isRecord(value) && Array.isArray(value.sessions)
+      ? value.sessions.length
+      : 0;
+  if (!isRecord(value) || !Array.isArray(value.warnings)) return sessionCount;
+  const skippedCount = value.warnings.filter((warning) =>
+    isRecord(warning) &&
+    ["session_too_large", "session_parse_failed"].includes(asString(warning.code) ?? "")
+  ).length;
+  return sessionCount + skippedCount;
+}
+
 function issueMessage(error: unknown): string {
   if (error instanceof Error && error.message.trim()) return error.message.trim();
   if (typeof error === "string" && error.trim()) return error.trim();
@@ -191,7 +207,9 @@ function discoveryIssues(value: unknown): WorkspaceLoadIssue[] {
     const code = asString(warning.code) ?? "session_scan_warning";
     const message = code === "session_too_large"
       ? "有一条会话文件超过 1 GB。Relay 为避免占用过多内存没有显示它，其他会话不受影响。"
-      : asString(warning.message) ?? "部分本机会话没有成功读取。";
+      : code === "session_parse_failed"
+        ? "有一条会话记录无法安全读取。Relay 已跳过这条记录，其他会话不受影响。"
+        : asString(warning.message) ?? "部分本机会话没有成功读取。";
     return [{
       stage: "discover_sessions" as const,
       code,
@@ -203,20 +221,24 @@ function discoveryIssues(value: unknown): WorkspaceLoadIssue[] {
 
 export async function loadWorkspaceSnapshot(
   runtime: WorkspaceRuntime = defaultWorkspaceRuntime,
+  sessionLimit = DEFAULT_SESSION_LIMIT,
 ): Promise<WorkspaceSnapshot> {
+  const normalizedLimit = Math.max(1, Math.min(EXPANDED_SESSION_LIMIT, Math.trunc(sessionLimit)));
   if (!runtime.isTauri()) {
     return {
-      environment: demoEnvironment,
-      sessions: demoSessions,
-      source: "demo",
+      environment: unavailableEnvironment,
+      sessions: [],
+      source: "unavailable",
       issues: [],
+      sessionLimit: normalizedLimit,
+      hasMoreSessions: false,
     };
   }
 
   const [environmentResult, healthResult, sessionsResult] = await Promise.allSettled([
     runtime.invoke("environment_status"),
     runtime.invoke("adapter_health"),
-    runtime.invoke("discover_sessions", { request: { limit: 250 } }),
+    runtime.invoke("discover_sessions", { request: { limit: normalizedLimit } }),
   ]);
 
   const issues: WorkspaceLoadIssue[] = [];
@@ -234,8 +256,10 @@ export async function loadWorkspaceSnapshot(
   }
 
   let sessions: SessionSummary[] = [];
+  let returnedCandidateCount = 0;
   if (sessionsResult.status === "fulfilled") {
     sessions = normalizeSessions(sessionsResult.value);
+    returnedCandidateCount = returnedSessionCandidateCount(sessionsResult.value);
     issues.push(...discoveryIssues(sessionsResult.value));
   } else {
     issues.push(invokeIssue("discover_sessions", sessionsResult.reason));
@@ -246,6 +270,8 @@ export async function loadWorkspaceSnapshot(
     sessions,
     source: "native",
     issues,
+    sessionLimit: normalizedLimit,
+    hasMoreSessions: returnedCandidateCount >= normalizedLimit,
   };
 }
 
@@ -278,6 +304,16 @@ export async function restoreRelaypack(
   return invoke<RestoreRelaypackResult>("restore_relaypack", { request });
 }
 
+export async function importNativeSession(
+  request: ImportNativeSessionRequest,
+): Promise<ImportNativeSessionResult> {
+  return invoke<ImportNativeSessionResult>("import_native_session", { request });
+}
+
+export async function openImportedChatgptTask(sessionId: string): Promise<void> {
+  return invoke<void>("open_imported_chatgpt_task", { sessionId });
+}
+
 export async function uploadShare(request: UploadShareRequest): Promise<UploadShareResult> {
   return invoke<UploadShareResult>("upload_share", { request });
 }
@@ -303,8 +339,4 @@ export async function downloadShare(
   request: DownloadShareRequest,
 ): Promise<DownloadShareResult> {
   return invoke<DownloadShareResult>("download_share", { request });
-}
-
-export async function launchAgent(request: LaunchAgentRequest): Promise<LaunchAgentResult> {
-  return invoke<LaunchAgentResult>("launch_agent", { request });
 }

@@ -79,17 +79,14 @@ async function route(request: Request, env: Env): Promise<Response> {
       return authorizationFailure;
     }
     const contentType = request.headers.get("Content-Type")?.split(";", 1)[0]?.trim().toLowerCase();
-    if (contentType === "application/octet-stream") {
-      return createDirectShare(request, env);
+    if (contentType !== "application/json") {
+      return apiError(
+        415,
+        "unsupported_media_type",
+        "Use application/json to reserve a share before uploading ciphertext.",
+      );
     }
-    if (contentType === "application/json") {
-      return createShareReservation(request, env);
-    }
-    return apiError(
-      415,
-      "unsupported_media_type",
-      "Use application/octet-stream for a direct upload or application/json for a reservation.",
-    );
+    return createShareReservation(request, env);
   }
 
   const canonicalLandingMatch = /^\/s\/v1\/([A-Za-z0-9_-]{32})$/u.exec(url.pathname);
@@ -101,20 +98,6 @@ async function route(request: Request, env: Env): Promise<Response> {
     return request.method === "HEAD"
       ? new Response(null, { status: response.status, headers: response.headers })
       : response;
-  }
-
-  const legacyLandingMatch = /^\/s\/([A-Za-z0-9_-]{32})$/u.exec(url.pathname);
-  if (legacyLandingMatch !== null) {
-    if (request.method !== "GET" && request.method !== "HEAD") {
-      return methodNotAllowed(["GET", "HEAD"]);
-    }
-    const shareId = legacyLandingMatch[1] as string;
-    return new Response(null, {
-      status: 308,
-      headers: {
-        Location: `${publicBaseUrl(request, env)}/s/v1/${shareId}`,
-      },
-    });
   }
 
   const shareMatch = /^\/v1\/shares\/([A-Za-z0-9_-]{32})(\/blob)?$/u.exec(url.pathname);
@@ -373,136 +356,6 @@ async function createShareReservation(request: Request, env: Env): Promise<Respo
   return apiError(503, "identifier_generation_failed", "A unique share identifier could not be reserved.");
 }
 
-async function createDirectShare(request: Request, env: Env): Promise<Response> {
-  const contentEncoding = request.headers.get("Content-Encoding");
-  if (contentEncoding !== null && contentEncoding.toLowerCase() !== "identity") {
-    return apiError(415, "content_encoding_not_allowed", "Encoded request bodies are not accepted.");
-  }
-  if (request.body === null) {
-    return apiError(400, "ciphertext_body_required", "The ciphertext body is required.");
-  }
-
-  const maxBytes = Math.min(
-    parsePositiveInteger(env.MAX_CIPHERTEXT_BYTES, DEFAULT_MAX_BYTES),
-    DEFAULT_MAX_BYTES,
-  );
-  const declaredBytes = parseRequiredHeaderInteger(request.headers.get("X-Relay-Bytes"));
-  if (declaredBytes === null || declaredBytes < 1 || declaredBytes > maxBytes) {
-    return apiError(400, "invalid_ciphertext_size", `X-Relay-Bytes must be between 1 and ${maxBytes}.`);
-  }
-  const contentLength = parseRequiredHeaderInteger(request.headers.get("Content-Length"));
-  if (contentLength === null) {
-    return apiError(411, "content_length_required", "Content-Length is required for ciphertext uploads.");
-  }
-  if (contentLength !== declaredBytes) {
-    return apiError(400, "ciphertext_size_mismatch", "Content-Length differs from X-Relay-Bytes.");
-  }
-
-  const suppliedSha256 = (
-    request.headers.get("X-Relay-Sha256") ??
-    request.headers.get("X-Relay-Ciphertext-Sha256") ??
-    ""
-  ).toLowerCase();
-  if (!/^[a-f0-9]{64}$/u.test(suppliedSha256)) {
-    return apiError(400, "invalid_ciphertext_sha256", "X-Relay-Sha256 must be a 64-character SHA-256 hex digest.");
-  }
-
-  const maxTtl = Math.min(
-    parsePositiveInteger(env.MAX_TTL_SECONDS, DEFAULT_MAX_TTL_SECONDS),
-    DEFAULT_MAX_TTL_SECONDS,
-  );
-  const minTtl = Math.min(
-    parsePositiveInteger(env.MIN_TTL_SECONDS, DEFAULT_MIN_TTL_SECONDS),
-    maxTtl,
-  );
-  const defaultTtl = Math.min(
-    Math.max(parsePositiveInteger(env.DEFAULT_TTL_SECONDS, DEFAULT_TTL_SECONDS), minTtl),
-    maxTtl,
-  );
-  const ttlHeader = request.headers.get("X-Relay-TTL");
-  const ttl = ttlHeader === null ? defaultTtl : parseRequiredHeaderInteger(ttlHeader);
-  if (ttl === null || ttl < minTtl || ttl > maxTtl) {
-    return apiError(400, "invalid_expiration", `X-Relay-TTL must be between ${minTtl} and ${maxTtl}.`);
-  }
-
-  const now = Date.now();
-  const uploadExpirySeconds = Math.min(
-    parsePositiveInteger(env.UPLOAD_EXPIRY_SECONDS, DEFAULT_UPLOAD_EXPIRY_SECONDS),
-    ttl,
-  );
-  for (let attempt = 0; attempt < 5; attempt += 1) {
-    const shareId = randomBase64Url(24);
-    const objectKey = `ciphertext/${randomBase64Url(32)}`;
-    const uploadToken = randomBase64Url(32);
-    const revokeToken = randomBase64Url(32);
-    const record: ShareRecord = {
-      version: 1,
-      status: "awaiting_upload",
-      objectKey,
-      createdAt: now,
-      expiresAt: now + ttl * 1000,
-      uploadExpiresAt: now + uploadExpirySeconds * 1000,
-      ciphertextBytes: declaredBytes,
-      ciphertextSha256: suppliedSha256,
-      uploadTokenHash: await hashCapability("upload", uploadToken),
-      revokeTokenHash: await hashCapability("revoke", revokeToken),
-    };
-    const id = env.RELAY_SHARES.idFromName(shareId);
-    const stub = env.RELAY_SHARES.get(id);
-    const initialized = await stub.fetch("https://relay.internal/internal/init", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ record }),
-    });
-    if (initialized.status === 409) {
-      continue;
-    }
-    if (!initialized.ok) {
-      return apiError(503, "share_reservation_failed", "The share could not be reserved.");
-    }
-
-    const uploadHeaders = new Headers();
-    uploadHeaders.set("Authorization", `Bearer ${uploadToken}`);
-    uploadHeaders.set("Content-Type", "application/octet-stream");
-    uploadHeaders.set("Content-Length", String(declaredBytes));
-    uploadHeaders.set("X-Relay-Ciphertext-Sha256", suppliedSha256);
-    const uploadRequest = new Request(`https://relay.internal/v1/shares/${shareId}/blob`, {
-      method: "PUT",
-      headers: uploadHeaders,
-      body: request.body,
-    });
-    const uploaded = await uploadReservedShare(uploadRequest, env, stub);
-    if (!uploaded.ok) {
-      await stub.fetch(`https://relay.internal/v1/shares/${shareId}`, {
-        method: "DELETE",
-        headers: { Authorization: `Bearer ${revokeToken}` },
-      });
-      return new Response(uploaded.body, {
-        status: uploaded.status,
-        statusText: uploaded.statusText,
-        headers: uploaded.headers,
-      });
-    }
-    await uploaded.arrayBuffer();
-
-    const baseUrl = publicBaseUrl(request, env);
-    return jsonResponse(
-      {
-        schema: "relay.share.created.v1",
-        share_id: shareId,
-        share_url: `${baseUrl}/s/v1/${shareId}`,
-        metadata_url: `${baseUrl}/v1/shares/${shareId}`,
-        blob_url: `${baseUrl}/v1/shares/${shareId}/blob`,
-        expires_at: new Date(record.expiresAt).toISOString(),
-        revoke_token: revokeToken,
-      },
-      201,
-    );
-  }
-
-  return apiError(503, "identifier_generation_failed", "A unique share identifier could not be reserved.");
-}
-
 async function requireConfiguredUploadToken(request: Request, env: Env): Promise<Response | null> {
   const configured = env.UPLOAD_TOKEN;
   if (configured === undefined || configured === "") {
@@ -624,7 +477,6 @@ function landingPage(shareId: string): Response {
     @keyframes loading { from { transform: translateX(-15%); } to { transform: translateX(145%); } }
     .viewer-header { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 1.5rem; align-items: end; margin-bottom: 1.25rem; }
     .viewer-header > div:first-child { min-width: 0; }
-    .eyebrow { margin: 0 0 .45rem; color: #2563eb; font-size: .75rem; font-weight: 700; letter-spacing: .08em; text-transform: uppercase; }
     h1 { margin: 0; font-size: clamp(1.7rem, 3vw, 2.35rem); line-height: 1.15; letter-spacing: -.04em; overflow-wrap: anywhere; }
     #share-title { max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
     .project-name { margin: .55rem 0 0; color: #667085; font-size: .94rem; }
@@ -640,11 +492,7 @@ function landingPage(shareId: string): Response {
     .summary-item:last-child { border-right: 0; }
     .summary-item span { display: block; color: #7a8495; font-size: .72rem; }
     .summary-item strong { display: block; margin-top: .25rem; font-size: .9rem; font-weight: 650; }
-    .security-note { margin-bottom: 1rem; border: 1px solid #d9e5fb; border-radius: .8rem; background: #f5f8ff; color: #36445e; }
-    .security-note summary { padding: .9rem 1rem; cursor: pointer; font-size: .84rem; font-weight: 700; }
-    .security-copy { padding: 0 1rem 1rem; border-top: 1px solid #e2eafa; }
-    .security-copy p { margin: .75rem 0 0; font-size: .82rem; line-height: 1.65; }
-    .limitations { margin: 0 0 1rem; padding: .85rem 1rem; border: 1px solid #e1e6ed; border-radius: .8rem; background: #fff; color: #596579; font-size: .82rem; line-height: 1.6; }
+    .share-note { margin: 0 0 1rem; padding: .85rem 1rem; border: 1px solid #d9e5fb; border-radius: .8rem; background: #f5f8ff; color: #36445e; font-size: .82rem; line-height: 1.6; }
     .tabs { display: flex; gap: 1.5rem; margin-bottom: 0; padding: 0 1rem; border: 1px solid #e1e6ed; border-bottom: 0; border-radius: .8rem .8rem 0 0; background: #fff; }
     .tab { position: relative; min-height: 3.15rem; padding: 0 .1rem; border: 0; background: transparent; color: #697386; cursor: pointer; font-size: .86rem; font-weight: 650; }
     .tab.is-active { color: #172033; }
@@ -699,12 +547,12 @@ function landingPage(shareId: string): Response {
 <body>
   <header class="site-header">
     <div class="brand">Relay</div>
-    <div class="header-note">加密的开发会话分享</div>
+    <div class="header-note">开发会话分享</div>
   </header>
   <main>
     <section class="state-card" id="loading" aria-live="polite">
       <h1>正在读取分享内容</h1>
-      <p>Relay 正在下载密文，并在当前浏览器中解密和检查内容。</p>
+      <p>正在验证链接并读取内容。</p>
       <div class="loading-line" aria-hidden="true"></div>
     </section>
 
@@ -716,13 +564,12 @@ function landingPage(shareId: string): Response {
     <section id="viewer" hidden>
       <header class="viewer-header">
         <div>
-          <p class="eyebrow">Relay 分享</p>
           <h1 id="share-title">未命名会话</h1>
           <p class="project-name">项目：<span id="share-project">未命名项目</span></p>
         </div>
         <div class="header-actions">
-          <button class="button" id="copy-link" type="button">复制完整链接</button>
-          <button class="button primary" id="download-package" type="button">下载 Relay 分享包</button>
+          <button class="button" id="copy-link" type="button">复制链接</button>
+          <button class="button primary" id="download-package" type="button">下载分享文件</button>
         </div>
       </header>
 
@@ -733,29 +580,20 @@ function landingPage(shareId: string): Response {
         <div class="summary-item"><span>有效期至</span><strong id="share-expiry">时间未知</strong></div>
       </div>
 
-      <details class="security-note">
-        <summary>浏览器本地解密和链接安全说明</summary>
-        <div class="security-copy">
-          <p>分享包的解密在当前浏览器中完成。解密密钥位于地址中 <code>#k=</code> 后面，浏览器请求密文时不会把这一段发送给服务器。</p>
-          <p>本页面由分享服务器提供，页面代码理论上可以读取地址中的密钥。内容包含私有代码、账号信息或其他敏感资料时，建议改用 Relay 桌面应用。</p>
-          <p>此页面只连接当前分享服务器，不连接第三方服务。完整链接本身就是读取凭据，请只发送给需要查看的人。</p>
-        </div>
-      </details>
-
-      <p class="limitations">浏览器可查看聊天记录和交接说明，也可下载原始分享包。恢复 Git 修改、创建本机工作目录或打开新的 ChatGPT 任务，需要使用 Relay 桌面应用。工具记录仅供查看，不会执行。</p>
+      <p class="share-note">此链接可以查看分享内容，请不要转发给无关人员。工具记录只供阅读，不会运行。下载分享文件并用 Relay 打开后，可以保存发送者选择的文件，并导入到 ChatGPT 或 Claude Code。</p>
 
       <div class="tabs" role="tablist" aria-label="分享内容">
         <button class="tab is-active" type="button" role="tab" aria-selected="true" data-tab="transcript">聊天记录</button>
-        <button class="tab" type="button" role="tab" aria-selected="false" data-tab="handoff">交接说明</button>
+        <button class="tab" type="button" role="tab" aria-selected="false" data-tab="handoff">项目说明</button>
       </div>
 
       <section class="panel" id="transcript-panel" role="tabpanel">
         <div class="toolbar">
-          <input class="search" id="message-search" type="search" placeholder="搜索消息、工具名或正文" aria-label="搜索聊天记录">
+          <input class="search" id="message-search" type="search" placeholder="搜索会话内容" aria-label="搜索会话内容">
           <div class="filters" aria-label="记录类型">
             <button class="filter is-active" type="button" data-filter="all">全部</button>
-            <button class="filter" type="button" data-filter="conversation">对话</button>
-            <button class="filter" type="button" data-filter="tools">工具记录</button>
+            <button class="filter" type="button" data-filter="conversation">消息</button>
+            <button class="filter" type="button" data-filter="tools">工具</button>
           </div>
         </div>
         <div class="message-list" id="message-list"></div>
@@ -764,8 +602,7 @@ function landingPage(shareId: string): Response {
 
       <section class="panel" id="handoff-panel" role="tabpanel" hidden>
         <div class="handoff-toolbar">
-          <button class="button" id="copy-handoff" type="button">复制交接说明</button>
-          <button class="button" id="download-handoff" type="button">下载 HANDOFF.md</button>
+          <button class="button" id="copy-handoff" type="button">复制项目说明</button>
         </div>
         <pre class="handoff-text" id="handoff-text"></pre>
       </section>
@@ -805,12 +642,4 @@ function containsSensitiveQuery(url: URL): boolean {
 
 function isPlainObject(value: unknown): value is CreateShareInput {
   return typeof value === "object" && value !== null && !Array.isArray(value);
-}
-
-function parseRequiredHeaderInteger(value: string | null): number | null {
-  if (value === null || !/^[1-9][0-9]*$/u.test(value)) {
-    return null;
-  }
-  const parsed = Number(value);
-  return Number.isSafeInteger(parsed) ? parsed : null;
 }

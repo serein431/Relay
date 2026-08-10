@@ -25,14 +25,14 @@ describe("copyText", () => {
     expect(clipboardPlugin.writeText).toHaveBeenCalledWith("relay link");
   });
 
-  it("keeps the browser clipboard fallback for the interface preview", async () => {
+  it("rejects browser-only previews instead of using a second clipboard path", async () => {
     const browserWriteText = vi.fn();
     vi.stubGlobal("window", {});
     vi.stubGlobal("navigator", { clipboard: { writeText: browserWriteText } });
 
-    await copyText("preview text");
+    await expect(copyText("preview text")).rejects.toThrow("请在 Relay 桌面应用中使用复制功能");
 
-    expect(browserWriteText).toHaveBeenCalledWith("preview text");
+    expect(browserWriteText).not.toHaveBeenCalled();
     expect(clipboardPlugin.writeText).not.toHaveBeenCalled();
   });
 });

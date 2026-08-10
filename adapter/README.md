@@ -1,16 +1,20 @@
 # Relay Agent Adapter
 
-`relay-agent-adapter` 是 Relay 桌面程序的只读会话适配程序。它读取本机 Claude Code 和 Codex 的原生 JSONL 历史，返回会话列表、预览和通用对话结构。
+这个目录包含 Relay 使用的两个本机辅助程序：
 
-这部分当前只负责会话：
+- `relay-agent-adapter` 只读扫描本机 Claude Code 和 ChatGPT 会话，返回会话列表、预览和通用对话结构。
+- `relay-session-importer` 只在用户点击导入后，根据分享包新增一条 Claude Code 会话或 ChatGPT 任务。
+
+`relay-agent-adapter` 只负责读取：
 
 - 不写入 `~/.claude` 或 `~/.codex`。
-- 不恢复原生历史。
 - 不运行历史里的工具调用。
 - 不读取或发送 Git 仓库内容。
 - 不上传数据，也不生成最终的 `.relaypack`。
 
 Git 状态、附件文件、选择分享哪些内容、加密和上传由桌面核心负责。
+
+`relay-session-importer` 不复制发送方的原始会话文件。它只使用分享包中已经允许分享的内容，分配新的会话 ID，并新建会话文件和索引记录。ChatGPT 桌面状态文件存在时，导入器也会把新任务加入置顶列表。已有会话文件不会被覆盖；历史工具记录只用于阅读，不会再次执行。
 
 ## 构建和测试
 
@@ -18,6 +22,7 @@ Git 状态、附件文件、选择分享哪些内容、加密和上传由桌面�
 cd adapter
 go test ./...
 go build -o bin/relay-agent-adapter ./cmd/relay-agent-adapter
+go build -o bin/relay-session-importer ./cmd/relay-session-importer
 ```
 
 `bin/` 已在仓库根目录的 `.gitignore` 中忽略。桌面程序发布时应为目标架构重新构建，不应提交本机二进制。

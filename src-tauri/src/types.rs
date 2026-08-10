@@ -457,6 +457,7 @@ pub struct RelaypackPreview {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub head: Option<String>,
     pub conversation_records: usize,
+    pub importable_session: bool,
     pub asset_count: usize,
     pub untracked_file_count: usize,
     pub diagnostics: Vec<RelaypackDiagnosticPreview>,
@@ -491,6 +492,49 @@ pub struct RestoreRelaypackResult {
     pub unstaged_applied: bool,
     pub untracked_files_restored: usize,
     pub preview: RelaypackPreview,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct ImportNativeSessionRequest {
+    pub agent: AgentProvider,
+    pub worktree_path: String,
+    pub handoff_json_path: String,
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize)]
+pub struct ImportNativeSessionResult {
+    pub status: String,
+    pub target: String,
+    pub session_id: String,
+    pub title: String,
+    pub target_home: String,
+    pub target_cwd: String,
+    pub session_path: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub backup_dir: Option<String>,
+    pub writes: Vec<String>,
+    #[serde(default)]
+    pub created_files: Vec<String>,
+    pub dry_run: bool,
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub continue_command: String,
+    pub verification: NativeImportVerification,
+    #[serde(default)]
+    pub open_status: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub open_error_code: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub open_error: Option<String>,
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize)]
+pub struct NativeImportVerification {
+    pub session_file: bool,
+    pub index: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub state: Option<bool>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub pinned: Option<bool>,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -603,28 +647,4 @@ pub struct RevokeShareRequest {
 pub struct RevokeShareResult {
     pub share_id: String,
     pub revoked: bool,
-}
-
-#[derive(Debug, Clone, Deserialize)]
-pub struct LaunchAgentRequest {
-    pub agent: AgentProvider,
-    pub worktree_path: String,
-    pub handoff_markdown_path: String,
-}
-
-#[derive(Debug, Clone, Serialize)]
-pub struct LaunchAgentResult {
-    pub agent: AgentProvider,
-    pub worktree_path: String,
-    pub executable_path: String,
-    pub process_id: u32,
-    pub launch_mode: String,
-    pub startup_prompt: String,
-    pub verification_status: String,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub session_id: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub session_state: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub waiting_reason: Option<String>,
 }

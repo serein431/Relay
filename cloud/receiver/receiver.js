@@ -57,12 +57,9 @@ elements.search.addEventListener("input", () => {
   renderRecords();
 });
 
-document.querySelector("#download-handoff").addEventListener("click", () => {
-  downloadBlob(new Blob([state.markdown], { type: "text/markdown;charset=utf-8" }), "HANDOFF.md");
-});
 document.querySelector("#copy-handoff").addEventListener("click", async () => {
   await copyText(state.markdown);
-  showToast("交接说明已复制");
+  showToast("项目说明已复制");
 });
 document.querySelector("#download-package").addEventListener("click", () => {
   const project = safeFilename(readString(state.handoff?.project?.display_name) || "handoff");
@@ -70,7 +67,7 @@ document.querySelector("#download-package").addEventListener("click", () => {
 });
 document.querySelector("#copy-link").addEventListener("click", async () => {
   await copyText(location.href);
-  showToast("完整分享链接已复制");
+  showToast("分享链接已复制");
 });
 
 void loadShare();
@@ -286,12 +283,12 @@ function renderError(code) {
   const copies = {
     key_missing: ["链接不完整", "当前地址缺少解密密钥。请让发送者重新发送完整的 Relay 分享链接。"],
     relaypack_key_invalid: ["链接不完整", "分享链接中的解密密钥格式不正确。请向发送者索取新的完整链接。"],
-    relaypack_auth_failed: ["无法解密分享内容", "密钥不正确，或者分享包已经发生变化。请向发送者确认链接。"],
+    relaypack_auth_failed: ["无法读取分享内容", "链接不正确，或者分享内容已经发生变化。请向发送者确认链接。"],
     share_unavailable: ["分享已经失效", "这个分享可能已经过期、被撤销，或者不存在。"],
-    share_not_ready: ["分享仍在上传", "发送者的密文还没有上传完成，请稍后刷新。"],
-    browser_unsupported: ["浏览器版本过旧", "当前浏览器不支持本地加密处理。请更新浏览器，或使用 Relay 桌面应用。"],
-    relaypack_too_large: ["分享包过大", "浏览器无法安全读取这个分享包，请使用 Relay 桌面应用。"],
-    relaypack_digest_mismatch: ["分享包校验失败", "下载内容与服务器记录不一致。请停止使用此链接并联系发送者。"],
+    share_not_ready: ["分享仍在上传", "发送者的文件还没有上传完成，请稍后刷新。"],
+    browser_unsupported: ["浏览器版本过旧", "当前浏览器不支持读取此分享。请更新浏览器，或使用 Relay 桌面应用。"],
+    relaypack_too_large: ["分享文件过大", "浏览器无法读取这个文件，请使用 Relay 桌面应用。"],
+    relaypack_digest_mismatch: ["内容校验失败", "下载内容与服务器记录不一致。请停止使用此链接并联系发送者。"],
   };
   const [title, message] = copies[code] || ["无法读取分享", "分享内容没有成功下载或验证，请稍后重试。"];
   elements.errorTitle.textContent = title;

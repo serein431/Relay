@@ -11,3 +11,5 @@ cloud/.dev.vars
 cloud/.wrangler/
 cloud/coverage/
 cloud/src/receiver-bundle.generated.ts
+.playwright-cli/
+output/

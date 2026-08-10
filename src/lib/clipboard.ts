@@ -5,9 +5,5 @@ export async function copyText(value: string): Promise<void> {
     await writeText(value);
     return;
   }
-  if (typeof navigator !== "undefined" && navigator.clipboard?.writeText) {
-    await navigator.clipboard.writeText(value);
-    return;
-  }
-  throw new Error("当前环境不支持自动复制");
+  throw new Error("请在 Relay 桌面应用中使用复制功能");
 }

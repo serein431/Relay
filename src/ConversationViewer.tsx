@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useDeferredValue, useEffect, useMemo, useState } from "react";
 import { copyText } from "./lib/clipboard";
 import type {
   AdapterPreviewBlock,
@@ -41,11 +41,23 @@ export function blockLabel(block: AdapterPreviewBlock): string {
     case "text": return "文字";
     case "tool_call": return block.name ? `工具调用 · ${block.name}` : "工具调用";
     case "tool_result": return "工具结果";
-    case "source_context": return block.native_type ? `项目指令 · ${block.native_type}` : "项目指令";
+    case "source_context": return block.native_type ? `项目说明 · ${block.native_type}` : "项目说明";
     case "asset_ref": return block.native_type ? `附件 · ${block.native_type}` : "附件";
     case "unsupported": return block.native_type ? `未识别内容 · ${block.native_type}` : "未识别内容";
     default: return block.kind || "其他内容";
   }
+}
+
+export function toolStatusLabel(status: string): string {
+  const normalized = status.trim().toLocaleLowerCase("en-US");
+  if (["completed", "complete", "success", "succeeded", "ok"].includes(normalized)) {
+    return "已完成";
+  }
+  if (["failed", "failure", "error", "errored"].includes(normalized)) return "失败";
+  if (["running", "in_progress", "started"].includes(normalized)) return "进行中";
+  if (["pending", "queued"].includes(normalized)) return "等待中";
+  if (["cancelled", "canceled"].includes(normalized)) return "已取消";
+  return status;
 }
 
 function stringify(value: unknown): string {
@@ -179,8 +191,7 @@ function ConversationBlock({
       <header>
         <strong>{blockLabel(block)}</strong>
         <span>
-          {block.status ? <b>{block.status}</b> : null}
-          {block.call_id ? <code title={block.call_id}>调用编号 {block.call_id}</code> : null}
+          {block.status ? <b>{toolStatusLabel(block.status)}</b> : null}
         </span>
       </header>
       <pre className={isToolBlock(block) ? "is-technical" : undefined}>
@@ -214,7 +225,8 @@ export default function ConversationViewer({
   const [copiedMessageId, setCopiedMessageId] = useState<string | null>(null);
 
   const messages = preview?.conversation.messages ?? [];
-  const needle = query.trim().toLocaleLowerCase("zh-CN");
+  const deferredQuery = useDeferredValue(query);
+  const needle = deferredQuery.trim().toLocaleLowerCase("zh-CN");
   const filtered = useMemo(() => messages.flatMap((message, sourceIndex) => {
     const blocks = blocksForFilter(message, filter);
     if (blocks.length === 0) return [];
@@ -222,9 +234,9 @@ export default function ConversationViewer({
     return [{ message, blocks, sourceIndex }];
   }), [filter, messages, needle]);
   const visible = filtered.slice(0, visibleLimit);
-  const toolBlockCount = messages.reduce((count, message) =>
-    count + message.blocks.filter(isToolBlock).length, 0);
-  const tocItems = filtered.filter(({ message }) => message.role === "user");
+  const toolBlockCount = useMemo(() => messages.reduce((count, message) =>
+    count + message.blocks.filter(isToolBlock).length, 0), [messages]);
+  const tocItems = visible.filter(({ message }) => message.role === "user");
 
   useEffect(() => {
     setVisibleLimit(INITIAL_MESSAGE_LIMIT);
@@ -289,23 +301,22 @@ export default function ConversationViewer({
     <section className="conversation-viewer" aria-label="完整聊天记录">
       <header className="conversation-toolbar">
         <div className="conversation-summary">
-          <strong>聊天记录</strong>
           <span>{messages.length} 条消息</span>
           <span>{toolBlockCount} 项工具记录</span>
         </div>
         <label className="conversation-search">
-          <span className="sr-only">搜索聊天记录</span>
+          <span className="sr-only">搜索会话内容</span>
           <input
             value={query}
             onChange={(event) => setQuery(event.target.value)}
-            placeholder="搜索消息、工具名或正文"
+            placeholder="搜索会话内容"
           />
         </label>
         <div className="conversation-filters" aria-label="记录类型">
           {([
             ["all", "全部"],
-            ["conversation", "对话"],
-            ["tools", "工具记录"],
+            ["conversation", "消息"],
+            ["tools", "工具"],
           ] as const).map(([value, label]) => (
             <button
               key={value}
@@ -353,7 +364,7 @@ export default function ConversationViewer({
                           key={key}
                           block={block}
                           blockKey={key}
-                          query={query}
+                          query={deferredQuery}
                           expanded={expandedBlocks.has(key)}
                           onToggle={toggleBlock}
                         />

@@ -19,13 +19,16 @@ mkdir -p "$output_dir"
 build_one() {
   local goarch="$1"
   local target="$2"
-  local output="$output_dir/relay-agent-adapter-$target"
+  local adapter_output="$output_dir/relay-agent-adapter-$target"
+  local importer_output="$output_dir/relay-session-importer-$target"
   (
     cd "$adapter_dir"
     CGO_ENABLED=0 GOOS=darwin GOARCH="$goarch" \
-      go build -trimpath -ldflags='-s -w' -o "$output" ./cmd/relay-agent-adapter
+      go build -trimpath -ldflags='-s -w' -o "$adapter_output" ./cmd/relay-agent-adapter
+    CGO_ENABLED=0 GOOS=darwin GOARCH="$goarch" \
+      go build -trimpath -ldflags='-s -w' -o "$importer_output" ./cmd/relay-session-importer
   )
-  chmod 0755 "$output"
+  chmod 0755 "$adapter_output" "$importer_output"
 }
 
 case "$target_triple" in
@@ -42,7 +45,13 @@ case "$target_triple" in
       "$output_dir/relay-agent-adapter-aarch64-apple-darwin" \
       "$output_dir/relay-agent-adapter-x86_64-apple-darwin" \
       -output "$output_dir/relay-agent-adapter-universal-apple-darwin"
-    chmod 0755 "$output_dir/relay-agent-adapter-universal-apple-darwin"
+    lipo -create \
+      "$output_dir/relay-session-importer-aarch64-apple-darwin" \
+      "$output_dir/relay-session-importer-x86_64-apple-darwin" \
+      -output "$output_dir/relay-session-importer-universal-apple-darwin"
+    chmod 0755 \
+      "$output_dir/relay-agent-adapter-universal-apple-darwin" \
+      "$output_dir/relay-session-importer-universal-apple-darwin"
     ;;
   "")
     case "$arch" in
@@ -59,7 +68,13 @@ case "$target_triple" in
           "$output_dir/relay-agent-adapter-aarch64-apple-darwin" \
           "$output_dir/relay-agent-adapter-x86_64-apple-darwin" \
           -output "$output_dir/relay-agent-adapter-universal-apple-darwin"
-        chmod 0755 "$output_dir/relay-agent-adapter-universal-apple-darwin"
+        lipo -create \
+          "$output_dir/relay-session-importer-aarch64-apple-darwin" \
+          "$output_dir/relay-session-importer-x86_64-apple-darwin" \
+          -output "$output_dir/relay-session-importer-universal-apple-darwin"
+        chmod 0755 \
+          "$output_dir/relay-agent-adapter-universal-apple-darwin" \
+          "$output_dir/relay-session-importer-universal-apple-darwin"
         ;;
       *)
         printf 'Unsupported Tauri architecture for Relay Adapter: %s\n' "$arch" >&2

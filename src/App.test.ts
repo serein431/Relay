@@ -1,32 +1,54 @@
 import { describe, expect, it } from "vitest";
 import {
   initialOptions,
+  issueDescription,
   nativeErrorCode,
   previewUpdateMessage,
   reconcilePreviewSelection,
   shareOptionCopy,
+  shareOptionsSummary,
 } from "./App";
 import { groupProjects } from "./lib/projects";
 import type { SessionContentPreview, SessionSummary } from "./types";
 
 describe("分享选项说明", () => {
-  it("五类内容都有明确的范围说明", () => {
+  it("五类内容都使用简短的用户说明", () => {
     expect(Object.keys(shareOptionCopy)).toHaveLength(5);
-    expect(shareOptionCopy.conversation.detail).toContain("不包含系统提示、模型私有推理");
-    expect(shareOptionCopy.toolEvidence.detail).toContain("不会重新执行");
-    expect(shareOptionCopy.gitState.description).toContain("未跟踪文件");
+    expect(shareOptionCopy.conversation.description).toContain("可见消息");
+    expect(shareOptionCopy.toolEvidence.description).toContain("只供接收者查看");
+    expect(shareOptionCopy.gitState.description).toContain("新文件");
     expect(shareOptionCopy.projectInstructions.description).toContain("AGENTS.md");
-    expect(shareOptionCopy.environment.detail).toContain("不包含环境变量值、密钥");
+    expect(shareOptionCopy.environment.description).toContain("操作系统");
   });
 
-  it("默认关闭更容易带出机器信息的内容", () => {
+  it("默认包含会话、工具记录、代码改动和项目说明", () => {
     expect(initialOptions).toMatchObject({
       conversation: true,
-      toolEvidence: false,
+      toolEvidence: true,
       gitState: true,
       projectInstructions: true,
       environment: false,
     });
+    expect(shareOptionsSummary(initialOptions)).toBe(
+      "当前发送：聊天记录、工具记录、代码改动、项目说明。",
+    );
+  });
+
+  it("发送内容摘要随选项变化", () => {
+    expect(shareOptionsSummary({
+      conversation: false,
+      toolEvidence: false,
+      gitState: false,
+      projectInstructions: false,
+      environment: true,
+    })).toBe("当前发送：设备信息。");
+    expect(shareOptionsSummary({
+      conversation: false,
+      toolEvidence: false,
+      gitState: false,
+      projectInstructions: false,
+      environment: false,
+    })).toBe("当前没有选择发送内容。");
   });
 
   it("项目列表使用仓库根目录，同时保留会话自己的工作目录", () => {
@@ -53,6 +75,21 @@ describe("分享选项说明", () => {
       message: "not inside a Git worktree",
     })).toBe("not_a_git_repository");
     expect(nativeErrorCode(new Error("network failed"))).toBeUndefined();
+  });
+
+  it("本机会话错误使用正式中文，内部说明不进入主文案", () => {
+    expect(issueDescription({
+      stage: "adapter_health",
+      code: "adapter_timeout",
+      message: "process deadline exceeded after 30000ms",
+      severity: "error",
+    })).toBe("本机会话较多或文件较大，读取时间超过限制。请稍后重试。");
+    expect(issueDescription({
+      stage: "discover_sessions",
+      code: "future_error",
+      message: "unknown internal message",
+      severity: "error",
+    })).not.toContain("unknown internal message");
   });
 
   it("会话更新后保留仍然有效的内容选择", () => {
@@ -87,6 +124,6 @@ describe("分享选项说明", () => {
       excludedMessageIds: ["message-1"],
       excludedBlocks: [{ message_id: "message-1", block_index: 0 }],
     });
-    expect(previewUpdateMessage(previous, latest)).toContain("新增了 1 条记录");
+    expect(previewUpdateMessage(previous, latest)).toContain("已新增 1 条记录");
   });
 });

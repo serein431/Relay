@@ -32,7 +32,10 @@
     "category": "DeveloperTool",
     "shortDescription": "Share Claude Code and ChatGPT work safely",
     "longDescription": "Relay packages selected agent conversations and Git work into an encrypted handoff that another developer can inspect and restore in a new worktree.",
-    "externalBin": ["../adapter/bin/relay-agent-adapter"],
+    "externalBin": [
+      "../adapter/bin/relay-agent-adapter",
+      "../adapter/bin/relay-session-importer"
+    ],
     "icon": [
       "icons/32x32.png",
       "icons/128x128.png",

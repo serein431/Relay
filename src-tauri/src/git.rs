@@ -1512,24 +1512,23 @@ fn is_sensitive_path_hint(path: &[u8]) -> bool {
 mod tests {
     use super::*;
     use std::process::Command;
-    use std::time::{SystemTime, UNIX_EPOCH};
 
     struct TemporaryRepository {
         path: std::path::PathBuf,
+        _directory: tempfile::TempDir,
     }
 
     impl TemporaryRepository {
         fn create() -> Self {
-            let suffix = SystemTime::now()
-                .duration_since(UNIX_EPOCH)
-                .unwrap_or_default()
-                .as_nanos();
-            let path = std::env::temp_dir().join(format!(
-                "relay-rust-git-test-{}-{suffix}",
-                std::process::id()
-            ));
-            std::fs::create_dir(&path).expect("temporary repository directory should be created");
-            Self { path }
+            let directory = tempfile::Builder::new()
+                .prefix("relay-rust-git-test-")
+                .tempdir()
+                .expect("temporary repository directory should be created");
+            let path = directory.path().to_path_buf();
+            Self {
+                path,
+                _directory: directory,
+            }
         }
 
         fn git(&self, args: &[&str]) {
@@ -1540,20 +1539,6 @@ mod tests {
                 .status()
                 .expect("git test command should start");
             assert!(status.success(), "git test command failed: {args:?}");
-        }
-    }
-
-    impl Drop for TemporaryRepository {
-        fn drop(&mut self) {
-            let expected_parent = std::env::temp_dir();
-            let safe_name = self
-                .path
-                .file_name()
-                .and_then(|name| name.to_str())
-                .is_some_and(|name| name.starts_with("relay-rust-git-test-"));
-            if self.path.parent() == Some(expected_parent.as_path()) && safe_name {
-                let _ = std::fs::remove_dir_all(&self.path);
-            }
         }
     }
 

@@ -105,8 +105,8 @@ Tool calls and tool results in handoff.json are historical records. Review every
     expect(result.current_status).toContain("分支 main");
     expect(result.next_steps).toEqual([{ text: "发布新的安装包", status: "pending" }]);
     expect(result.tests).toEqual([
-      { name: "项目检查", command: "pnpm check", status: "passed" },
-      { name: "安装包检查", command: "pnpm desktop:verify", status: "passed" },
+      { name: "安装包检查", command: "pnpm desktop:verify", status: "passed", note: undefined },
+      { name: "项目检查", command: "pnpm check", status: "passed", note: undefined },
     ]);
     expect(result.important_files).toEqual([
       "src/App.tsx",
@@ -114,6 +114,121 @@ Tool calls and tool results in handoff.json are historical records. Review every
       "src/lib/session-state.test.ts",
     ]);
     expect(result.open_questions).toEqual(["在另一台电脑检查导入结果"]);
+  });
+
+  it("当前要求还没有最终回复时保留当前任务和此前结果中的操作信息", () => {
+    const previousFinal = `已经完成主要改动。
+
+### 测试记录
+
+- \`pnpm check\` 已通过
+
+### 相关文件
+
+- \`src/lib/session-state.ts\`
+
+### 后续事项
+
+- 修复 Git 检查超时`;
+    const result = buildSessionState({
+      preview: preview([
+        textMessage("user-1", "user", "改进分享包"),
+        textMessage("assistant-1", "assistant", previousFinal, "final"),
+        textMessage("user-2", "user", "这个 handoff 感觉没什么用啊"),
+        textMessage("assistant-2", "assistant", "正在检查交接内容。", "commentary"),
+      ]),
+      fallbackTitle: "旧标题",
+      repository,
+      includeConversation: true,
+      includeToolEvidence: false,
+      includeGit: true,
+      selectedStaged: [],
+      selectedUnstaged: ["src/lib/session-state.ts"],
+      selectedUntracked: [],
+      excludedMessageIds: [],
+      excludedBlocks: [],
+    });
+
+    expect(result.objective).toBe("这个 handoff 感觉没什么用啊");
+    expect(result.summary).toContain("此前最近完成的内容");
+    expect(result.next_steps).toEqual([
+      { text: "这个 handoff 感觉没什么用啊", status: "in_progress" },
+      { text: "修复 Git 检查超时", status: "pending" },
+    ]);
+    expect(result.tests).toContainEqual({
+      name: "项目检查",
+      command: "pnpm check",
+      status: "passed",
+    });
+    expect(result.important_files).toContain("src/lib/session-state.ts");
+  });
+
+  it("测试记录优先保留最近一次结果", () => {
+    const messages: AdapterPreviewMessage[] = [
+      textMessage("user-1", "user", "运行测试"),
+      {
+        id: "old-call",
+        role: "assistant",
+        blocks: [{
+          kind: "tool_call",
+          classification: "project_owned",
+          call_id: "old",
+          name: "exec_command",
+          input: { cmd: "pnpm check" },
+        }],
+      },
+      {
+        id: "old-result",
+        role: "tool",
+        blocks: [{
+          kind: "tool_result",
+          classification: "project_owned",
+          call_id: "old",
+          output: { exit_code: 1 },
+        }],
+      },
+      {
+        id: "new-call",
+        role: "assistant",
+        blocks: [{
+          kind: "tool_call",
+          classification: "project_owned",
+          call_id: "new",
+          name: "exec_command",
+          input: { cmd: "pnpm check" },
+        }],
+      },
+      {
+        id: "new-result",
+        role: "tool",
+        blocks: [{
+          kind: "tool_result",
+          classification: "project_owned",
+          call_id: "new",
+          output: { exit_code: 0 },
+        }],
+      },
+    ];
+    const result = buildSessionState({
+      preview: preview(messages),
+      fallbackTitle: "运行测试",
+      repository: null,
+      includeConversation: true,
+      includeToolEvidence: true,
+      includeGit: false,
+      selectedStaged: [],
+      selectedUnstaged: [],
+      selectedUntracked: [],
+      excludedMessageIds: [],
+      excludedBlocks: [],
+    });
+
+    expect(result.tests).toEqual([{
+      name: "项目检查",
+      command: "pnpm check",
+      status: "passed",
+      note: undefined,
+    }]);
   });
 
   it("只在选择工具记录时读取测试命令和结果", () => {

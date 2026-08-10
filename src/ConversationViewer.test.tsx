@@ -1,6 +1,11 @@
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it } from "vitest";
-import ConversationViewer, { blockContent, blockLabel, roleLabel } from "./ConversationViewer";
+import ConversationViewer, {
+  blockContent,
+  blockLabel,
+  roleLabel,
+  toolStatusLabel,
+} from "./ConversationViewer";
 import type { SessionContentPreview } from "./types";
 
 const preview: SessionContentPreview = {
@@ -81,5 +86,31 @@ describe("完整聊天记录", () => {
       classification: "user_visible",
       input: { path: "/tmp/relay" },
     })).toContain("/tmp/relay");
+    expect(toolStatusLabel("completed")).toBe("已完成");
+    expect(toolStatusLabel("error")).toBe("失败");
+  });
+
+  it("数千条记录的会话先显示前 200 条，不为尚未显示的消息生成目录项", () => {
+    const manyMessages = Array.from({ length: 8_685 }, (_, index) => ({
+      id: `message-${index}`,
+      role: "user",
+      blocks: [{
+        kind: "text" as const,
+        classification: "user_visible" as const,
+        text: `第 ${index + 1} 条用户消息`,
+      }],
+    }));
+    const markup = renderToStaticMarkup(
+      <ConversationViewer
+        preview={{ ...preview, conversation: { messages: manyMessages } }}
+        loading={false}
+        error={null}
+        onRetry={() => undefined}
+      />,
+    );
+
+    expect(markup).toContain("再显示 200 条记录");
+    expect(markup).toContain("第 200 条用户消息");
+    expect(markup).not.toContain("第 201 条用户消息");
   });
 });

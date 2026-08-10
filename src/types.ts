@@ -95,6 +95,7 @@ export interface RelaypackPreview {
   branch?: string;
   head?: string;
   conversation_records: number;
+  importable_session: boolean;
   asset_count: number;
   untracked_file_count: number;
   diagnostics: RelaypackDiagnostic[];
@@ -228,6 +229,36 @@ export interface RestoreRelaypackResult {
   preview: RelaypackPreview;
 }
 
+export interface ImportNativeSessionRequest {
+  agent: AgentKind;
+  worktree_path: string;
+  handoff_json_path: string;
+}
+
+export interface ImportNativeSessionResult {
+  status: string;
+  target: AgentKind;
+  session_id: string;
+  title: string;
+  target_home: string;
+  target_cwd: string;
+  session_path: string;
+  backup_dir?: string;
+  writes: string[];
+  created_files: string[];
+  dry_run: boolean;
+  continue_command?: string;
+  verification: {
+    session_file: boolean;
+    index: boolean;
+    state?: boolean;
+    pinned?: boolean;
+  };
+  open_status: "requested" | "manual" | "failed";
+  open_error_code?: string;
+  open_error?: string;
+}
+
 export interface UploadShareRequest {
   package_path: string;
   key: string;
@@ -295,30 +326,13 @@ export interface DownloadShareResult extends InspectRelaypackResult {
   share_id: string;
 }
 
-export interface LaunchAgentRequest {
-  agent: AgentKind;
-  worktree_path: string;
-  handoff_markdown_path: string;
-}
-
-export interface LaunchAgentResult {
-  agent: AgentKind;
-  worktree_path: string;
-  executable_path: string;
-  process_id: number;
-  launch_mode: "background" | "deep_link";
-  startup_prompt: string;
-  verification_status: "VERIFIED" | "OPEN_REQUESTED" | "UNVERIFIED";
-  session_id?: string;
-  session_state?: string;
-  waiting_reason?: string;
-}
-
 export interface WorkspaceSnapshot {
   environment: EnvironmentStatus;
   sessions: SessionSummary[];
-  source: "native" | "demo";
+  source: "native" | "unavailable";
   issues: WorkspaceLoadIssue[];
+  sessionLimit: number;
+  hasMoreSessions: boolean;
 }
 
 export type WorkspaceLoadStage =

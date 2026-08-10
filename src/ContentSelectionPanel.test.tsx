@@ -76,7 +76,8 @@ describe("ContentSelectionPanel", () => {
     expect(markup).toContain("请检查这个项目");
     expect(markup).not.toContain("工具调用 · shell");
     expect(markup).not.toContain("CLIENT_SECRET");
-    expect(markup).toContain("0</strong><span>项需要检查");
+    expect(markup).toContain("1 条消息");
+    expect(markup).not.toContain("可能含敏感信息");
   });
 
   it("toggles a tool call and its matching result together", () => {
@@ -108,5 +109,34 @@ describe("ContentSelectionPanel", () => {
     );
     expect(restored.excludedMessageIds).toEqual([]);
     expect(restored.excludedBlocks).toEqual([]);
+  });
+
+  it("数千条记录只先显示前 160 条供检查", () => {
+    const manyMessages: AdapterPreviewMessage[] = Array.from(
+      { length: 8_685 },
+      (_, index) => ({
+        id: `large-message-${index}`,
+        role: index % 2 === 0 ? "user" : "assistant",
+        blocks: [{
+          kind: "text",
+          classification: "user_visible",
+          text: `第 ${index + 1} 条记录`,
+        }],
+      }),
+    );
+    const markup = renderToStaticMarkup(
+      <ContentSelectionPanel
+        preview={{ ...preview, conversation: { messages: manyMessages } }}
+        excludedMessageIds={[]}
+        excludedBlocks={[]}
+        onExcludedMessageIdsChange={() => undefined}
+        onExcludedBlocksChange={() => undefined}
+      />,
+    );
+
+    expect(markup).toContain("取消全部 8685 条");
+    expect(markup).toContain("再显示 160 条");
+    expect(markup).toContain("第 160 条记录");
+    expect(markup).not.toContain("第 161 条记录");
   });
 });

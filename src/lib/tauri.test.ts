@@ -3,14 +3,14 @@ import { loadWorkspaceSnapshot, type WorkspaceRuntime } from "./tauri";
 
 function runtime(
   native: boolean,
-  handlers: Record<string, () => unknown | Promise<unknown>> = {},
+  handlers: Record<string, (args?: Record<string, unknown>) => unknown | Promise<unknown>> = {},
 ): WorkspaceRuntime {
   return {
     isTauri: () => native,
-    invoke: async (command) => {
+    invoke: async (command, args) => {
       const handler = handlers[command];
       if (!handler) throw new Error(`unexpected command: ${command}`);
-      return handler();
+      return handler(args);
     },
   };
 }
@@ -40,11 +40,18 @@ const sessions = {
 };
 
 describe("loadWorkspaceSnapshot", () => {
-  it("只在普通浏览器中返回演示数据", async () => {
+  it("普通浏览器中不伪造本机会话", async () => {
     const result = await loadWorkspaceSnapshot(runtime(false));
-    expect(result.source).toBe("demo");
-    expect(result.sessions.length).toBeGreaterThan(0);
+    expect(result.source).toBe("unavailable");
+    expect(result.sessions).toEqual([]);
+    expect(result.environment).toEqual({
+      git: { installed: false },
+      claudeCode: { installed: false },
+      codex: { installed: false },
+      adapter: { installed: false },
+    });
     expect(result.issues).toEqual([]);
+    expect(result.hasMoreSessions).toBe(false);
   });
 
   it("正式应用的单项失败不会丢掉其他真实结果", async () => {
@@ -121,5 +128,54 @@ describe("loadWorkspaceSnapshot", () => {
       message: expect.stringContaining("超过 1 GB"),
     }));
     expect(result.issues[0].message).not.toContain("configured safety limit");
+  });
+
+  it("默认只读取最近 250 条，需要时可按 1000 条重新读取", async () => {
+    const requestedLimits: number[] = [];
+    const handlers = {
+      environment_status: () => environment,
+      adapter_health: () => ({ executable_path: "/Applications/Relay.app/adapter" }),
+      discover_sessions: (args?: Record<string, unknown>) => {
+        const request = args?.request as { limit?: number } | undefined;
+        requestedLimits.push(request?.limit ?? 0);
+        return {
+          sessions: Array.from({ length: request?.limit ?? 0 }, (_, index) => ({
+            id: `session-${index}`,
+            provider: "codex",
+            title: `会话 ${index}`,
+            project_name: "Relay",
+            cwd: "/Users/test/Relay",
+          })),
+          warnings: [],
+        };
+      },
+    };
+
+    const recent = await loadWorkspaceSnapshot(runtime(true, handlers));
+    const expanded = await loadWorkspaceSnapshot(runtime(true, handlers), 1_000);
+
+    expect(requestedLimits).toEqual([250, 1_000]);
+    expect(recent).toMatchObject({ sessionLimit: 250, hasMoreSessions: true });
+    expect(expanded).toMatchObject({ sessionLimit: 1_000, hasMoreSessions: true });
+  });
+
+  it("达到读取数量时即使有一条记录无法解析，仍提供较早记录入口", async () => {
+    const result = await loadWorkspaceSnapshot(runtime(true, {
+      environment_status: () => environment,
+      adapter_health: () => ({ executable_path: "/Applications/Relay.app/adapter" }),
+      discover_sessions: () => ({
+        sessions: Array.from({ length: 249 }, (_, index) => ({
+          id: `session-${index}`,
+          provider: "codex",
+          title: `会话 ${index}`,
+          project_name: "Relay",
+          cwd: "/Users/test/Relay",
+        })),
+        warnings: [{ code: "session_parse_failed", message: "failed" }],
+      }),
+    }));
+
+    expect(result.sessions).toHaveLength(249);
+    expect(result.hasMoreSessions).toBe(true);
   });
 });

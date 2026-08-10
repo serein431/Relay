@@ -354,16 +354,31 @@ function commandsFromTools(
 }
 
 function mergeTests(tests: GeneratedTest[]): GeneratedTest[] {
-  const rank: Record<string, number> = { failed: 4, passed: 3, not_run: 2, unknown: 1 };
   const merged = new Map<string, GeneratedTest>();
-  for (const test of tests) {
+  for (const test of [...tests].reverse()) {
     const key = test.command?.toLocaleLowerCase("en-US") ?? test.name.toLocaleLowerCase("zh-CN");
-    const current = merged.get(key);
-    if (!current || (rank[test.status ?? "unknown"] ?? 0) > (rank[current.status ?? "unknown"] ?? 0)) {
-      merged.set(key, test);
-    }
+    if (!merged.has(key)) merged.set(key, test);
   }
   return [...merged.values()].slice(0, 12);
+}
+
+function mergeNextSteps(
+  objective: string,
+  hasLatestFinal: boolean,
+  hasProgress: boolean,
+  extracted: NonNullable<GeneratedSessionState["next_steps"]>,
+): NonNullable<GeneratedSessionState["next_steps"]> {
+  if (hasLatestFinal || !objective.trim()) return extracted;
+  const currentTask = {
+    text: truncateText(objective, 300),
+    status: hasProgress ? "in_progress" : "pending",
+  };
+  const duplicatesObjective = extracted.some((step) => (
+    step.text === currentTask.text
+    || step.text.includes(currentTask.text)
+    || currentTask.text.includes(step.text)
+  ));
+  return duplicatesObjective ? extracted : [currentTask, ...extracted].slice(0, 8);
 }
 
 function relativeRepositoryPath(value: string, repositoryRoot?: string): string | null {
@@ -471,7 +486,7 @@ export function buildSessionState({
     currentStatus = `最近一项要求尚未出现最终回复。${gitStatus}`;
   }
 
-  const sourceForDetails = latestFinal?.text ?? "";
+  const sourceForDetails = latestFinal?.text ?? previousFinal?.text ?? "";
   const visibleTests = includeConversation ? commandsFromText(sourceForDetails) : [];
   const toolTests = includeToolEvidence
     ? commandsFromTools(preview.conversation.messages, excludedMessages, excludedBlockKeys)
@@ -485,17 +500,21 @@ export function buildSessionState({
   ].map((file) => relativeRepositoryPath(file, repository?.root)).filter((file): file is string => Boolean(file)))].slice(0, 24);
 
   const constraints = ["工具调用和工具结果只是历史记录，不会自动执行。"];
-  if (includeGit && repository) constraints.push("分享包包含发送者选择的 Git 内容，接收后应先查看改动再继续。 ");
+  if (includeGit && repository) constraints.push("分享内容包含发送者选择的 Git 修改，接收后应先查看改动再继续。 ");
   if (excludedMessageIds.length > 0 || excludedBlocks.length > 0) {
     constraints.push(`发送者排除了 ${excludedMessageIds.length} 条消息和 ${excludedBlocks.length} 个内容块。`);
   }
   if (!includeConversation) constraints.push("发送者没有包含会话正文。");
 
+  const extractedNextSteps = includeConversation ? extractNextSteps(sourceForDetails) : [];
+
   return {
     objective,
     summary,
     current_status: currentStatus.trim(),
-    next_steps: includeConversation ? extractNextSteps(sourceForDetails) : [],
+    next_steps: includeConversation
+      ? mergeNextSteps(objective, Boolean(latestFinal), Boolean(progress), extractedNextSteps)
+      : [],
     tests: mergeTests([...toolTests, ...visibleTests]),
     important_files: importantFiles,
     constraints: constraints.map((item) => item.trim()),
