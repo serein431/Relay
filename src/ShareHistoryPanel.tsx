@@ -6,6 +6,7 @@ import {
   resumeSavedShareUpload,
   revokeSavedShare,
 } from "./lib/tauri";
+import LoadingState from "./LoadingState";
 import type { ShareHistoryRecord } from "./types";
 
 type ShareHistoryPanelProps = {
@@ -255,7 +256,12 @@ export default function ShareHistoryPanel({
         ) : null}
 
         {loading && records.length === 0 ? (
-          <div className="history-empty"><i /><h2>正在读取本机记录</h2></div>
+          <LoadingState
+            className="history-loading-state"
+            title="正在读取分享记录"
+            description="Relay 正在检查本机保存的分享链接及其当前状态。"
+            stages={["读取本机记录", "核对上传状态", "整理可用链接"]}
+          />
         ) : null}
 
         {!loading && !error && records.length === 0 ? (

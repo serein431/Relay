@@ -15,10 +15,7 @@ const IMPORT_TIMEOUT: Duration = Duration::from_secs(300);
 const MAX_IMPORTER_STDOUT: usize = 2 * 1024 * 1024;
 const MAX_IMPORTER_STDERR: usize = 128 * 1024;
 const MAX_HANDOFF_BYTES: u64 = 1024 * 1024 * 1024;
-// A running ChatGPT process refreshes its local task catalog asynchronously.
-// In observed builds, a newly committed task can take several seconds to become
-// resumable even though its JSONL, index and SQLite row are already present.
-const CHATGPT_DISCOVERY_DELAY: Duration = Duration::from_secs(8);
+const CHATGPT_CATALOG_SETTLE_DELAY: Duration = Duration::from_millis(900);
 
 #[derive(Debug, Deserialize)]
 struct ImporterResponse {
@@ -169,12 +166,24 @@ pub fn import_native_session(
         ));
     }
     if request.agent == AgentProvider::Codex {
-        // ChatGPT keeps a live task catalog while it is running. Give that catalog
-        // a short opportunity to observe the committed session file and SQLite row
-        // before navigating to the new task. The macOS completion callback below
-        // only confirms delivery of the URL; it cannot confirm that the task is on
-        // screen.
-        thread::sleep(CHATGPT_DISCOVERY_DELAY);
+        match crate::chatgpt::refresh_running_catalog(Path::new(&result.target_home)) {
+            Ok(crate::chatgpt::CatalogRefreshStatus::Sent) => {
+                result.catalog_refresh_status = "sent".into();
+                result.catalog_refresh_error_code = None;
+                result.catalog_refresh_error = None;
+                thread::sleep(CHATGPT_CATALOG_SETTLE_DELAY);
+            }
+            Ok(crate::chatgpt::CatalogRefreshStatus::NotRunning) => {
+                result.catalog_refresh_status = "not_running".into();
+                result.catalog_refresh_error_code = None;
+                result.catalog_refresh_error = None;
+            }
+            Err(error) => {
+                result.catalog_refresh_status = "failed".into();
+                result.catalog_refresh_error_code = Some(error.code);
+                result.catalog_refresh_error = Some(error.message);
+            }
+        }
         match crate::chatgpt::open_imported_task(&result.session_id) {
             Ok(()) => {
                 result.open_status = "requested".into();
@@ -188,6 +197,9 @@ pub fn import_native_session(
             }
         }
     } else {
+        result.catalog_refresh_status.clear();
+        result.catalog_refresh_error_code = None;
+        result.catalog_refresh_error = None;
         result.open_status = "manual".into();
         result.open_error_code = None;
         result.open_error = None;

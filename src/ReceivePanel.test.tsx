@@ -90,11 +90,33 @@ describe("接收分享包", () => {
     expect(message).toContain("未能自动打开");
   });
 
-  it("ChatGPT 只说明正在打开，不把系统回调当作打开成功", () => {
+  it("ChatGPT 只说明已经发送打开请求，不把系统回调当作打开成功", () => {
     const message = nativeImportMessage(importResult({ open_status: "requested" }));
-    expect(message).toContain("正在打开这条任务");
+    expect(message).toContain("已发送打开请求");
     expect(message).not.toContain("已经导入并打开");
     expect(nativeImportOpenNotice(importResult({ open_status: "requested" }))).toBeNull();
+  });
+
+  it("ChatGPT 运行中时说明已经刷新任务列表", () => {
+    const result = importResult({
+      open_status: "requested",
+      catalog_refresh_status: "sent",
+    });
+    expect(nativeImportMessage(result)).toContain("重新读取本机任务列表");
+    expect(nativeImportOpenNotice(result)).toBeNull();
+  });
+
+  it("ChatGPT 任务列表刷新失败时保留导入结果并给出恢复步骤", () => {
+    const result = importResult({
+      open_status: "requested",
+      catalog_refresh_status: "failed",
+      catalog_refresh_error_code: "chatgpt_catalog_refresh_failed",
+      catalog_refresh_error: "connection reset",
+    });
+    expect(nativeImportMessage(result)).toContain("已经导入");
+    expect(nativeImportOpenNotice(result)).toContain("重新检查并打开");
+    expect(nativeImportOpenNotice(result)).toContain("重新启动 ChatGPT");
+    expect(nativeImportOpenNotice(result)).not.toContain("connection reset");
   });
 
   it("ChatGPT 需要手动打开时不显示内部英文错误", () => {

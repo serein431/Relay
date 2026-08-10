@@ -11,6 +11,7 @@ import { chooseDirectory, chooseRelaypackFile } from "./lib/dialog";
 import { userErrorMessage } from "./lib/errors";
 import { shareServiceOriginFromLink } from "./lib/share-service";
 import ConversationViewer from "./ConversationViewer";
+import LoadingState from "./LoadingState";
 import type {
   AgentKind,
   ImportNativeSessionResult,
@@ -57,6 +58,8 @@ export function receiveErrorMessage(error: unknown): string {
     chatgpt_signature_check_failed: "Relay 无法完成 ChatGPT 签名检查。请确认官方 ChatGPT 应用安装完整。",
     chatgpt_signature_untrusted: "本机注册的应用未通过 ChatGPT 签名检查。请使用官方 ChatGPT 应用。",
     chatgpt_open_failed: "macOS 未能把任务打开请求交给 ChatGPT。请稍后重试。",
+    chatgpt_catalog_refresh_failed: "Relay 无法通知当前运行的 ChatGPT 重新读取本机任务列表。请重新启动 ChatGPT 后再试。",
+    chatgpt_ipc_untrusted: "Relay 未使用权限不安全的 ChatGPT 本机通信文件。请重新启动 ChatGPT 后再试。",
     unsupported_platform: "当前系统不支持自动打开 ChatGPT 任务。",
     session_id_failed: "无法为新会话分配编号，请重试。",
     backup_failed: "创建导入前备份失败，Relay 没有开始写入新会话。",
@@ -175,7 +178,13 @@ export function nativeImportMessage(result: ImportNativeSessionResult): string {
   const shortID = result.session_id.slice(0, 12);
   if (result.target === "codex") {
     if (result.open_status === "requested") {
-      return `ChatGPT 任务“${result.title}”已经导入（${shortID}）。ChatGPT 正在打开这条任务。`;
+      if (result.catalog_refresh_status === "sent") {
+        return `ChatGPT 任务“${result.title}”已经导入（${shortID}）。Relay 已通知 ChatGPT 重新读取本机任务列表，并发送打开请求。`;
+      }
+      if (result.catalog_refresh_status === "failed") {
+        return `ChatGPT 任务“${result.title}”已经导入（${shortID}），但 Relay 未能通知当前运行的 ChatGPT 重新读取任务列表。`;
+      }
+      return `ChatGPT 任务“${result.title}”已经导入（${shortID}）。Relay 已发送打开请求。`;
     }
     if (result.open_status === "failed") {
       return `ChatGPT 任务“${result.title}”已经导入（${shortID}），但 Relay 未能自动打开。请在 ChatGPT 的本机任务列表中打开。`;
@@ -186,7 +195,11 @@ export function nativeImportMessage(result: ImportNativeSessionResult): string {
 }
 
 export function nativeImportOpenNotice(result: ImportNativeSessionResult): string | null {
-  if (result.target !== "codex" || result.open_status === "requested") return null;
+  if (result.target !== "codex") return null;
+  if (result.catalog_refresh_status === "failed") {
+    return "任务已经导入，但 Relay 未能通知当前运行的 ChatGPT 重新读取本机任务列表。请重新检查并打开；如果仍未显示，请重新启动 ChatGPT 后从任务列表打开。";
+  }
+  if (result.open_status === "requested") return null;
   if (result.open_status === "manual") {
     return "任务已经导入。Relay 未找到可自动打开任务的 ChatGPT 应用，请在 ChatGPT 的本机任务列表中打开。";
   }
@@ -250,6 +263,44 @@ export function nativeImportActionState(
     label,
     disabled: !canImport || busy !== null || complete,
     complete,
+  };
+}
+
+function receiveBusyCopy(
+  busy: "inspect" | "save" | AgentKind,
+  source: ReceiveSource,
+): { title: string; description: string; stages: string[] } {
+  if (busy === "inspect") {
+    return source === "share_link"
+      ? {
+          title: "正在打开分享",
+          description: "Relay 正在下载、验证并读取发送者允许查看的内容。",
+          stages: ["下载加密文件", "验证文件内容", "准备聊天预览"],
+        }
+      : {
+          title: "正在读取分享文件",
+          description: "Relay 正在验证本地文件并准备可查看的聊天记录。",
+          stages: ["读取本地文件", "验证文件内容", "准备聊天预览"],
+        };
+  }
+  if (busy === "save") {
+    return {
+      title: "正在保存分享内容",
+      description: "Relay 正在创建新的接收目录并写入所选文件。",
+      stages: ["创建接收目录", "保存代码和附件", "检查保存结果"],
+    };
+  }
+  if (busy === "codex") {
+    return {
+      title: "正在导入到 ChatGPT",
+      description: "Relay 正在保存文件、创建新任务并检查本机任务记录。",
+      stages: ["保存分享内容", "创建 ChatGPT 任务", "刷新任务列表"],
+    };
+  }
+  return {
+    title: "正在导入到 Claude Code",
+    description: "Relay 正在保存文件、创建新会话并检查会话记录。",
+    stages: ["保存分享内容", "创建 Claude Code 会话", "检查导入结果"],
   };
 }
 
@@ -438,7 +489,7 @@ export default function ReceivePanel({ home, onNotice }: ReceivePanelProps) {
     setChatgptOpenNotice(null);
     try {
       await openImportedChatgptTask(nativeImportResult.session_id);
-      setChatgptOpenNotice("ChatGPT 正在重新打开这条任务。若没有显示，请从本机任务列表中打开。");
+      setChatgptOpenNotice("Relay 已重新检查 ChatGPT 的本机任务列表，并再次发送打开请求。");
     } catch (caught) {
       setChatgptOpenNotice(receiveErrorMessage(caught));
     } finally {
@@ -546,8 +597,10 @@ export default function ReceivePanel({ home, onNotice }: ReceivePanelProps) {
   );
   const canRetryChatgptOpen = nativeImportResult?.target === "codex" && (
     nativeImportResult.open_status === "requested" ||
-    nativeImportResult.open_error_code === "chatgpt_open_failed"
+    nativeImportResult.open_error_code === "chatgpt_open_failed" ||
+    nativeImportResult.catalog_refresh_status === "failed"
   );
+  const activeBusyCopy = busy ? receiveBusyCopy(busy, source) : null;
 
   return (
     <main className="receive-workspace receive-page">
@@ -627,6 +680,15 @@ export default function ReceivePanel({ home, onNotice }: ReceivePanelProps) {
               <b>→</b>
             </button>
           </section>
+        ) : null}
+
+        {busy === "inspect" && activeBusyCopy ? (
+          <LoadingState
+            className="receive-operation-loading"
+            title={activeBusyCopy.title}
+            description={activeBusyCopy.description}
+            stages={activeBusyCopy.stages}
+          />
         ) : null}
 
         {error ? (
@@ -789,6 +851,16 @@ export default function ReceivePanel({ home, onNotice }: ReceivePanelProps) {
               </div>
             </section> : null}
 
+            {busy && busy !== "inspect" && activeBusyCopy ? (
+              <LoadingState
+                compact
+                className="receive-operation-loading is-in-review"
+                title={activeBusyCopy.title}
+                description={activeBusyCopy.description}
+                stages={activeBusyCopy.stages}
+              />
+            ) : null}
+
             {restoreResult || nativeImportResult ? (
               <div className="restore-success" ref={resultRef}>
                 <span className="restore-success-mark" aria-hidden="true">✓</span>
@@ -821,9 +893,13 @@ export default function ReceivePanel({ home, onNotice }: ReceivePanelProps) {
                   {nativeImportResult?.target === "codex" ? (
                     <div className="receive-chatgpt-open">
                       <p>
-                        {nativeImportResult.open_status === "requested"
-                          ? "任务已导入到 ChatGPT。ChatGPT 正在打开这条任务。"
-                          : "任务已导入，可从 ChatGPT 的本机任务列表打开。"}
+                        {nativeImportResult.catalog_refresh_status === "sent"
+                          ? "任务已导入。Relay 已通知 ChatGPT 重新读取本机任务列表，并发送打开请求。"
+                          : nativeImportResult.catalog_refresh_status === "failed"
+                            ? "任务已导入，但 Relay 未能通知当前运行的 ChatGPT 重新读取任务列表。"
+                            : nativeImportResult.open_status === "requested"
+                              ? "任务已导入，Relay 已发送打开请求。"
+                              : "任务已导入，可从 ChatGPT 的本机任务列表打开。"}
                       </p>
                       {canRetryChatgptOpen ? (
                         <button
@@ -831,7 +907,7 @@ export default function ReceivePanel({ home, onNotice }: ReceivePanelProps) {
                           disabled={openingChatgpt}
                           onClick={() => void reopenChatgpt()}
                         >
-                          {openingChatgpt ? "正在打开" : "重新打开 ChatGPT"}
+                          {openingChatgpt ? "正在检查" : "重新检查并打开"}
                         </button>
                       ) : null}
                       {chatgptOpenNotice ? <small role="status">{chatgptOpenNotice}</small> : null}

@@ -256,6 +256,9 @@ export interface ImportNativeSessionResult {
     pinned?: boolean;
   };
   open_status: "requested" | "manual" | "failed";
+  catalog_refresh_status?: "sent" | "not_running" | "failed";
+  catalog_refresh_error_code?: string;
+  catalog_refresh_error?: string;
   open_error_code?: string;
   open_error?: string;
 }

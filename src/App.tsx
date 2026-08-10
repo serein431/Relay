@@ -16,6 +16,7 @@ import ConversationViewer from "./ConversationViewer";
 import ContentSelectionPanel, {
   type ContentSelectionSummary,
 } from "./ContentSelectionPanel";
+import LoadingState from "./LoadingState";
 import ReceivePanel from "./ReceivePanel";
 import ShareHistoryPanel from "./ShareHistoryPanel";
 import type {
@@ -1083,7 +1084,13 @@ function App() {
             ) : (
               <div className="dialog-content">
                 {packBusy && !contentPreview && !repository ? (
-                  <div className="dialog-loading"><i /><span>正在读取会话内容和 Git 变更</span></div>
+                  <LoadingState
+                    compact
+                    className="dialog-loading-state"
+                    title="正在准备分享内容"
+                    description="Relay 正在读取所选会话和当前 Git 修改。"
+                    stages={["读取聊天记录", "检查项目说明", "读取代码修改"]}
+                  />
                 ) : null}
 
                 {contentPreviewError ? (

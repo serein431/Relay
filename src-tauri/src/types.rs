@@ -522,6 +522,12 @@ pub struct ImportNativeSessionResult {
     pub verification: NativeImportVerification,
     #[serde(default)]
     pub open_status: String,
+    #[serde(default)]
+    pub catalog_refresh_status: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub catalog_refresh_error_code: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub catalog_refresh_error: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub open_error_code: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]

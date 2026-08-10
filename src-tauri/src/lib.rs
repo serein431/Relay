@@ -226,14 +226,22 @@ async fn import_native_session(
 
 #[tauri::command]
 async fn open_imported_chatgpt_task(session_id: String) -> Result<(), CommandError> {
-    tauri::async_runtime::spawn_blocking(move || chatgpt::open_imported_task(&session_id))
-        .await
-        .map_err(|error| {
+    tauri::async_runtime::spawn_blocking(move || {
+        let codex_home = agent_home("CODEX_HOME", ".codex").ok_or_else(|| {
             CommandError::new(
-                "background_task_failed",
-                format!("ChatGPT open task failed: {error}"),
+                "home_unavailable",
+                "cannot determine the local ChatGPT data directory",
             )
-        })?
+        })?;
+        chatgpt::refresh_and_open_imported_task(&session_id, &codex_home)
+    })
+    .await
+    .map_err(|error| {
+        CommandError::new(
+            "background_task_failed",
+            format!("ChatGPT open task failed: {error}"),
+        )
+    })?
 }
 
 #[tauri::command]

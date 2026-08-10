@@ -154,7 +154,7 @@ Rust validator 还会检查引用关系，例如资产 ID 必须唯一且真实�
 8. 验证结果会先说明分享包是否包含可导入的聊天或项目说明。只有代码或工具记录时，界面只允许保存文件，不创建空会话。用户选择目标 Agent 后，导入器分配新的会话 ID，检查目标文件、索引和 ChatGPT SQLite 中没有同名记录，再生成会话内容。
 9. ChatGPT 会话使用 UUID v7，新增 `~/.codex/sessions/.../rollout-*.jsonl`，追加 `session_index.jsonl`，通过 SQLite 事务新增任务记录并写入置顶状态；在 `.codex-global-state.json` 存在时，也把新任务加入 `pinned-thread-ids`。如果 ChatGPT 尚未建立 `state_5.sqlite`，Relay 会要求用户先打开一次 ChatGPT，不会只写一份无法出现在任务列表中的 JSONL。Claude Code 会话使用新的 UUID，新增项目 JSONL，并更新 `sessions-index.json`。
 10. 导入完成后再次检查会话文件、索引、ChatGPT SQLite 记录和置顶状态。任一步失败时，只删除本次创建的文件和记录，并返回备份位置。
-11. ChatGPT 路径先枚举 `codex://` 的 macOS 处理应用，并用 Security.framework 核对 OpenAI 的 bundle ID、Team ID、嵌套代码和所有架构。验签通过后，Relay 等待运行中的 ChatGPT 读取新增任务，再打开 `codex://threads/<新任务 ID>`。macOS 回调只表示打开请求已经送出；接收页面允许再次发送请求，不会重复创建任务。Claude Code 返回 `claude --resume <新会话 ID>`，不替用户选择终端。
+11. ChatGPT 路径先通过当前用户的 `~/.codex/ipc/ipc.sock` 发送 `query-cache-invalidate`，要求运行中的 ChatGPT 重新读取本机任务列表；随后枚举 `codex://` 的 macOS 处理应用，并用 Security.framework 核对 OpenAI 的 bundle ID、Team ID、嵌套代码和所有架构。验签通过后，Relay 打开 `codex://threads/<新任务 ID>`。macOS 回调只表示打开请求已经送出；接收页面允许重新检查并再次发送请求，不会重复创建任务。Claude Code 返回 `claude --resume <新会话 ID>`，不替用户选择终端。
 
 恢复失败时不会强制删除已经创建的 worktree 或分支。错误会返回保留路径、分支 ref 和清理诊断，避免误删恢复期间由其他进程写入的文件。交接目录的 ignore 规则写进 Git common directory 的 `info/exclude`；实现会比较文件身份与内容后再替换和回退，但外部进程不受应用内锁约束，因此仍保留一个很短的并发修改窗口，详见 [security.md](security.md)。
 
