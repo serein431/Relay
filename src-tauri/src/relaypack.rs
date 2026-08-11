@@ -3105,14 +3105,12 @@ fn build_handoff(
             "count": 1,
             "note": "Git content was not included."
         }));
-    } else {
-        if omitted_git_items > 0 {
-            omissions.push(json!({
-                "reason": "git_excluded",
-                "count": omitted_git_items,
-                "note": "One or more Git capture categories or changed files were excluded by the sender."
-            }));
-        }
+    } else if omitted_git_items > 0 {
+        omissions.push(json!({
+            "reason": "git_excluded",
+            "count": omitted_git_items,
+            "note": "One or more Git capture categories or changed files were excluded by the sender."
+        }));
     }
     for (count, note) in [
         (
