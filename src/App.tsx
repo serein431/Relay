@@ -63,7 +63,7 @@ type SensitiveExportFinding = {
 export const initialOptions: ShareOptions = {
   conversation: true,
   toolEvidence: true,
-  gitState: true,
+  gitState: false,
   projectInstructions: true,
   environment: false,
 };

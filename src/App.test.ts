@@ -21,16 +21,16 @@ describe("分享选项说明", () => {
     expect(shareOptionCopy.environment.description).toContain("操作系统");
   });
 
-  it("默认包含会话、工具记录、代码改动和项目说明", () => {
+  it("默认包含会话、工具记录和项目说明，不包含代码改动", () => {
     expect(initialOptions).toMatchObject({
       conversation: true,
       toolEvidence: true,
-      gitState: true,
+      gitState: false,
       projectInstructions: true,
       environment: false,
     });
     expect(shareOptionsSummary(initialOptions)).toBe(
-      "当前发送：聊天记录、工具记录、代码改动、项目说明。",
+      "当前发送：聊天记录、工具记录、项目说明。",
     );
   });
 
