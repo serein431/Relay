@@ -99,7 +99,7 @@ func synthesizeClaudeSession(source transcript, sessionID, title, cwd string, no
 			"parentUuid": parent, "isSidechain": false, "uuid": id,
 			"timestamp": timestampOr(item.Timestamp, now.Add(time.Duration(index+1)*time.Millisecond)),
 			"userType":  "external", "entrypoint": "relay", "cwd": cwd,
-			"sessionId": sessionID, "version": "relay-0.1.0", "gitBranch": currentGitBranch(cwd),
+			"sessionId": sessionID, "version": importerVersion, "gitBranch": currentGitBranch(cwd),
 		}
 		switch item.Kind {
 		case "context":

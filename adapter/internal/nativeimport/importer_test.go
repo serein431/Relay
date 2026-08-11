@@ -116,6 +116,51 @@ func createCodexGlobalState(t *testing.T, home string) (string, []byte) {
 	return path, content
 }
 
+func TestReadCodexModelProvider(t *testing.T) {
+	tests := []struct {
+		name        string
+		config      string
+		write       bool
+		expected    string
+		expectError bool
+	}{
+		{name: "missing config uses the Codex default", expected: "openai"},
+		{
+			name:   "reads the recipient top-level provider",
+			config: "model_provider = \"custom\" # recipient setting\n\n[model_providers.custom]\nname = \"OpenAI\"\n",
+			write:  true, expected: "custom",
+		},
+		{name: "accepts a TOML literal string", config: "model_provider = 'bedrock'\n", write: true, expected: "bedrock"},
+		{
+			name:   "ignores provider-shaped keys inside tables",
+			config: "[model_providers.custom]\nmodel_provider = \"not-top-level\"\n",
+			write:  true, expected: "openai",
+		},
+		{name: "rejects a non-string provider", config: "model_provider = 42\n", write: true, expectError: true},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			home := t.TempDir()
+			if test.write {
+				if err := os.WriteFile(filepath.Join(home, codexConfigFile), []byte(test.config), 0o600); err != nil {
+					t.Fatal(err)
+				}
+			}
+			provider, err := readCodexModelProvider(home)
+			if test.expectError {
+				if err == nil {
+					t.Fatalf("expected an error, got provider %q", provider)
+				}
+				return
+			}
+			if err != nil || provider != test.expected {
+				t.Fatalf("provider = %q, error = %v; want %q", provider, err, test.expected)
+			}
+		})
+	}
+}
+
 func TestCodexImportCreatesNativeTaskAndIndex(t *testing.T) {
 	temp := t.TempDir()
 	cwd := filepath.Join(temp, "project")
@@ -125,6 +170,13 @@ func TestCodexImportCreatesNativeTaskAndIndex(t *testing.T) {
 	}
 	handoffPath := writeTestHandoff(t, temp)
 	statePath := createCodexState(t, home)
+	if err := os.WriteFile(
+		filepath.Join(home, codexConfigFile),
+		[]byte("model_provider = \"custom\" # use the recipient's configured provider\n\n[model_providers.custom]\nname = \"OpenAI\"\n"),
+		0o600,
+	); err != nil {
+		t.Fatal(err)
+	}
 
 	result, importErr := Import(Request{
 		HandoffPath: handoffPath, Target: "codex", TargetCWD: cwd, Home: home, Execute: true,
@@ -143,7 +195,7 @@ func TestCodexImportCreatesNativeTaskAndIndex(t *testing.T) {
 		t.Fatal(err)
 	}
 	text := string(session)
-	for _, expected := range []string{"session_meta", "请修复导入功能", "exec_command", "passed", "只是历史记录，不得重新执行"} {
+	for _, expected := range []string{"session_meta", `"model_provider":"custom"`, "请修复导入功能", "exec_command", "passed", "只是历史记录，不得重新执行"} {
 		if !strings.Contains(text, expected) {
 			t.Fatalf("Codex history does not contain %q", expected)
 		}
@@ -158,8 +210,10 @@ func TestCodexImportCreatesNativeTaskAndIndex(t *testing.T) {
 	if err != nil || !strings.Contains(string(index), result.SessionID) {
 		t.Fatalf("Codex index was not updated: %v", err)
 	}
-	rows, err := runSQLite(statePath, "SELECT id,title,cwd,is_pinned FROM threads;")
-	if err != nil || !strings.Contains(string(rows), result.SessionID) || !strings.Contains(string(rows), `"is_pinned":1`) {
+	rows, err := runSQLite(statePath, "SELECT id,title,cwd,model_provider,is_pinned FROM threads;")
+	if err != nil || !strings.Contains(string(rows), result.SessionID) ||
+		!strings.Contains(string(rows), `"model_provider":"custom"`) ||
+		!strings.Contains(string(rows), `"is_pinned":1`) {
 		t.Fatalf("Codex SQLite row was not written: %v %s", err, rows)
 	}
 	if result.Verification.State == nil || !*result.Verification.State ||

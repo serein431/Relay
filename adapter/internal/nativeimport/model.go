@@ -7,9 +7,14 @@ import (
 	"path/filepath"
 	"strings"
 	"time"
+
+	"relay.local/agent-adapter/internal/relay"
 )
 
-const maxHandoffBytes = 1024 << 20
+const (
+	maxHandoffBytes = 1024 << 20
+	importerVersion = "relay-" + relay.AdapterVersion
+)
 
 type Request struct {
 	HandoffPath string `json:"handoff_path"`

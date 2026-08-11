@@ -1,6 +1,6 @@
 [package]
 name = "relay-desktop"
-version = "0.1.0"
+version = "0.1.1"
 description = "Relay desktop shell"
 authors = ["Relay contributors"]
 edition = "2021"

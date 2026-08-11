@@ -12,6 +12,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"sort"
+	"strconv"
 	"strings"
 	"time"
 
@@ -22,6 +23,8 @@ const (
 	codexIndexFile       = "session_index.jsonl"
 	codexStateFile       = "state_5.sqlite"
 	codexGlobalStateFile = ".codex-global-state.json"
+	codexConfigFile      = "config.toml"
+	codexDefaultProvider = "openai"
 )
 
 var (
@@ -31,6 +34,90 @@ var (
 	writeCodexSessionForImport = writeFileExclusive
 )
 
+func readCodexModelProvider(home string) (string, error) {
+	content, err := os.ReadFile(filepath.Join(home, codexConfigFile))
+	if errors.Is(err, os.ErrNotExist) {
+		return codexDefaultProvider, nil
+	}
+	if err != nil {
+		return "", err
+	}
+
+	scanner := bufio.NewScanner(bytes.NewReader(content))
+	inRoot := true
+	for scanner.Scan() {
+		line := strings.TrimSpace(scanner.Text())
+		if line == "" || strings.HasPrefix(line, "#") {
+			continue
+		}
+		if strings.HasPrefix(line, "[") {
+			inRoot = false
+			continue
+		}
+		if !inRoot {
+			continue
+		}
+		key, value, ok := strings.Cut(line, "=")
+		if !ok || strings.TrimSpace(key) != "model_provider" {
+			continue
+		}
+		return parseCodexModelProviderValue(value)
+	}
+	if err := scanner.Err(); err != nil {
+		return "", err
+	}
+	return codexDefaultProvider, nil
+}
+
+func parseCodexModelProviderValue(raw string) (string, error) {
+	value := strings.TrimSpace(raw)
+	if value == "" {
+		return "", errors.New("model_provider must be a non-empty TOML string")
+	}
+
+	var provider string
+	var rest string
+	switch value[0] {
+	case '\'':
+		end := strings.IndexByte(value[1:], '\'')
+		if end < 0 {
+			return "", errors.New("model_provider has an unterminated TOML literal string")
+		}
+		provider = value[1 : end+1]
+		rest = value[end+2:]
+	case '"':
+		end := -1
+		for index := 1; index < len(value); index++ {
+			if value[index] == '\\' {
+				index++
+				continue
+			}
+			if value[index] == '"' {
+				end = index
+				break
+			}
+		}
+		if end < 0 {
+			return "", errors.New("model_provider has an unterminated TOML basic string")
+		}
+		decoded, err := strconv.Unquote(value[:end+1])
+		if err != nil {
+			return "", fmt.Errorf("model_provider is not a valid TOML basic string: %w", err)
+		}
+		provider = decoded
+		rest = value[end+1:]
+	default:
+		return "", errors.New("model_provider must be a TOML string")
+	}
+	if trailing := strings.TrimSpace(rest); trailing != "" && !strings.HasPrefix(trailing, "#") {
+		return "", errors.New("model_provider has unexpected trailing content")
+	}
+	if strings.TrimSpace(provider) == "" {
+		return "", errors.New("model_provider must be a non-empty TOML string")
+	}
+	return provider, nil
+}
+
 func importCodex(loaded loadedRequest) (Result, *ImportError) {
 	now := time.Now().UTC()
 	statePath := filepath.Join(loaded.home, codexStateFile)
@@ -39,6 +126,14 @@ func importCodex(loaded loadedRequest) (Result, *ImportError) {
 		return Result{}, fail(
 			"chatgpt_state_not_found",
 			"ChatGPT task database was not found; open ChatGPT once before importing a task",
+		)
+	}
+	modelProvider, providerErr := readCodexModelProvider(loaded.home)
+	if providerErr != nil {
+		return Result{}, fail(
+			"codex_config_invalid",
+			"cannot read ChatGPT model provider from config.toml: %v",
+			providerErr,
 		)
 	}
 	id, sessionPath, allocationErr := allocateCodexTarget(loaded.home, now)
@@ -75,7 +170,7 @@ func importCodex(loaded loadedRequest) (Result, *ImportError) {
 	}
 	result.BackupDir = backupDir
 	steps := []string{"backup_created"}
-	sessionBytes, buildErr := synthesizeCodexSession(loaded.transcript, id, title, loaded.targetCWD, now)
+	sessionBytes, buildErr := synthesizeCodexSession(loaded.transcript, id, title, loaded.targetCWD, modelProvider, now)
 	if buildErr != nil {
 		return Result{}, failAfter("session_build_failed", backupDir, steps, "cannot build ChatGPT history: %v", buildErr)
 	}
@@ -93,7 +188,7 @@ func importCodex(loaded loadedRequest) (Result, *ImportError) {
 	}
 	steps = append(steps, "index_updated")
 	if err := updateCodexStateForImport(statePath, codexRow{
-		ID: id, Path: sessionPath, CWD: loaded.targetCWD, Title: title,
+		ID: id, Path: sessionPath, CWD: loaded.targetCWD, Title: title, ModelProvider: modelProvider,
 		FirstUser: title, Preview: previewText(loaded.transcript), Now: now,
 	}); err != nil {
 		if rollbackErr := rollbackCodexImport(sessionPath, indexPath, indexExisted, statePath, globalStatePath, id, true, false); rollbackErr != nil {
@@ -132,7 +227,7 @@ func importCodex(loaded loadedRequest) (Result, *ImportError) {
 	return result, nil
 }
 
-func synthesizeCodexSession(source transcript, sessionID, title, cwd string, now time.Time) ([]byte, error) {
+func synthesizeCodexSession(source transcript, sessionID, title, cwd, modelProvider string, now time.Time) ([]byte, error) {
 	items := []map[string]any{
 		{
 			"timestamp": now.Format(time.RFC3339Nano),
@@ -140,8 +235,8 @@ func synthesizeCodexSession(source transcript, sessionID, title, cwd string, now
 			"payload": map[string]any{
 				"session_id": sessionID,
 				"id":         sessionID, "timestamp": now.Format(time.RFC3339Nano), "cwd": cwd,
-				"originator": "Relay", "cli_version": "relay-0.1.0", "source": "vscode",
-				"thread_source": "imported", "model_provider": "default",
+				"originator": "Relay", "cli_version": importerVersion, "source": "vscode",
+				"thread_source": "imported", "model_provider": modelProvider,
 			},
 		},
 		{
@@ -795,8 +890,8 @@ func decodeJSONLines(content []byte) ([]map[string]any, error) {
 }
 
 type codexRow struct {
-	ID, Path, CWD, Title, FirstUser, Preview string
-	Now                                      time.Time
+	ID, Path, CWD, Title, ModelProvider, FirstUser, Preview string
+	Now                                                     time.Time
 }
 
 type sqliteColumn struct {
@@ -816,14 +911,14 @@ func updateCodexSQLite(path string, input codexRow) error {
 	row := map[string]any{
 		"id": input.ID, "rollout_path": input.Path, "created_at": nowUnix, "updated_at": nowUnix,
 		"created_at_ms": nowMS, "updated_at_ms": nowMS, "recency_at": nowUnix, "recency_at_ms": nowMS,
-		"source": "vscode", "thread_source": "imported", "model_provider": "default", "cwd": input.CWD,
+		"source": "vscode", "thread_source": "imported", "model_provider": input.ModelProvider, "cwd": input.CWD,
 		"title": input.Title, "name": input.Title, "sandbox_policy": "{\"type\":\"disabled\"}", "approval_mode": "never",
-		"tokens_used": int64(0), "has_user_event": int64(1), "archived": int64(0), "cli_version": "relay-0.1.0",
+		"tokens_used": int64(0), "has_user_event": int64(1), "archived": int64(0), "cli_version": importerVersion,
 		"first_user_message": input.FirstUser, "memory_mode": "enabled", "preview": input.Preview,
 		"history_mode": "legacy", "is_pinned": int64(1),
 	}
 	knownDefaults := map[string]any{
-		"source": "vscode", "model_provider": "default", "cwd": "", "title": "", "name": nil,
+		"source": "vscode", "model_provider": input.ModelProvider, "cwd": "", "title": "", "name": nil,
 		"sandbox_policy": "{}", "approval_mode": "never", "tokens_used": int64(0),
 		"has_user_event": int64(0), "archived": int64(0), "cli_version": "",
 		"first_user_message": "", "memory_mode": "enabled", "preview": "",

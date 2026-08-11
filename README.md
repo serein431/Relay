@@ -120,7 +120,7 @@ ChatGPT 运行时可能保留旧的任务列表。Relay 完成写入检查后，
 
 ## 下载
 
-[下载 Relay v0.1.0（macOS Apple Silicon）](https://github.com/serein431/Relay/releases/tag/v0.1.0)
+[下载 Relay v0.1.1（macOS Apple Silicon）](https://github.com/serein431/Relay/releases/tag/v0.1.1)
 
 当前 DMG 使用 ad-hoc 签名，应用和内部程序的签名结构已经过检查，但没有 Developer ID 签名和 Apple 公证。陌生 Mac 仍可能提示无法验证开发者；请先确认文件来自本仓库，再到“系统设置 → 隐私与安全性”中允许本次打开。
 
@@ -175,14 +175,14 @@ pnpm desktop:build:local
 
 ```bash
 pnpm desktop:verify src-tauri/target/release/bundle/macos/Relay.app
-pnpm desktop:verify src-tauri/target/release/bundle/dmg/Relay_0.1.0_aarch64.dmg
+pnpm desktop:verify src-tauri/target/release/bundle/dmg/Relay_0.1.1_aarch64.dmg
 ```
 
 正式发布前必须运行更严格的检查：
 
 ```bash
 pnpm desktop:verify:release src-tauri/target/release/bundle/macos/Relay.app
-pnpm desktop:verify:release src-tauri/target/release/bundle/dmg/Relay_0.1.0_aarch64.dmg
+pnpm desktop:verify:release src-tauri/target/release/bundle/dmg/Relay_0.1.1_aarch64.dmg
 ```
 
 该检查要求 Developer ID Application 签名、有效 Team ID、Gatekeeper 验证和 app 公证票据，任何一项缺失都会停止发布。
