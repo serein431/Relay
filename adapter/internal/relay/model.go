@@ -7,7 +7,7 @@ const (
 	// PreviewSchema is the adapter's local, conversation-only export. It is not
 	// the encrypted/shareable Relay package assembled by the desktop core.
 	PreviewSchema  = "relay.adapter.handoff-preview.v1"
-	AdapterVersion = "0.1.1"
+	AdapterVersion = "0.1.2"
 
 	AgentClaude = "claude_code"
 	AgentCodex  = "codex"
