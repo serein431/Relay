@@ -682,11 +682,15 @@ func TestChatGPTImportRestoresNativeCustomToolRecordsAndCompactionMarker(t *test
 	}
 	var call map[string]any
 	var output map[string]any
+	var checkpoint map[string]any
 	compacted := false
 	for _, line := range strings.Split(string(content), "\n") {
 		var record map[string]any
 		if json.Unmarshal([]byte(line), &record) != nil {
 			continue
+		}
+		if record["type"] == "compacted" {
+			checkpoint, _ = record["payload"].(map[string]any)
 		}
 		payload, _ := record["payload"].(map[string]any)
 		switch payload["type"] {
@@ -714,6 +718,18 @@ func TestChatGPTImportRestoresNativeCustomToolRecordsAndCompactionMarker(t *test
 	}
 	if !compacted {
 		t.Fatal("visible context compaction event was not restored")
+	}
+	if checkpoint == nil {
+		t.Fatal("imported session is missing its resume compaction checkpoint")
+	}
+	replacement, err := json.Marshal(checkpoint["replacement_history"])
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(replacement), "检查文件") ||
+		strings.Contains(string(replacement), `tools.exec_command`) ||
+		strings.Contains(string(replacement), "/tmp/project") {
+		t.Fatalf("replacement history did not keep conversation context separate from tool evidence: %s", replacement)
 	}
 	parsed, err := relay.ParseSession(relay.SessionOptions{
 		Agent: relay.AgentCodex, SessionID: result.SessionID, CodexHome: home,
@@ -1005,6 +1021,50 @@ func TestUnpairedToolResultIsVisibleButNotExecutable(t *testing.T) {
 	text := string(content)
 	if !strings.Contains(text, "孤立结果") || !strings.Contains(text, "不得自动重新执行") {
 		t.Fatalf("unpaired result was not preserved safely: %s", text)
+	}
+}
+
+func TestCodexImportedReplacementHistoryIsBounded(t *testing.T) {
+	source := transcript{
+		Title: "较长导入任务",
+		Entries: []entry{
+			{Kind: "message", Role: "user", Text: "OLD-" + strings.Repeat("旧", 24_000)},
+			{Kind: "tool_call", Tool: "exec_command", Input: "TOOL-INPUT-" + strings.Repeat("x", 80_000)},
+			{Kind: "tool_result", Tool: "exec_command", Output: "TOOL-OUTPUT-" + strings.Repeat("y", 120_000)},
+			{Kind: "message", Role: "user", Text: "RECENT-" + strings.Repeat("新", 12_000)},
+			{Kind: "message", Role: "assistant", Text: "ASSIST-" + strings.Repeat("答", 20_000)},
+		},
+	}
+
+	replacement, visibleBytes := codexImportedReplacementHistory(source)
+	encoded, err := json.Marshal(replacement)
+	if err != nil {
+		t.Fatal(err)
+	}
+	text := string(encoded)
+	for _, forbidden := range []string{"TOOL-INPUT-", "TOOL-OUTPUT-", "OLD-"} {
+		if strings.Contains(text, forbidden) {
+			t.Fatalf("replacement history retained oversized historical content %q", forbidden)
+		}
+	}
+	for _, expected := range []string{"RECENT-", "ASSIST-", codexCompactionSummaryPrefix, codexImportedHistoryInstruction} {
+		if !strings.Contains(text, expected) {
+			t.Fatalf("replacement history lost %q", expected)
+		}
+	}
+	if visibleBytes <= 0 || visibleBytes > 160_000 {
+		t.Fatalf("replacement history has an unsafe visible size: %d bytes", visibleBytes)
+	}
+
+	userRunes := 0
+	for _, item := range replacement[1 : len(replacement)-1] {
+		content, _ := item["content"].([]map[string]string)
+		if len(content) == 1 {
+			userRunes += len([]rune(content[0]["text"]))
+		}
+	}
+	if userRunes > codexImportedUserHistoryMaxRunes {
+		t.Fatalf("retained user history exceeded its budget: %d runes", userRunes)
 	}
 }
 

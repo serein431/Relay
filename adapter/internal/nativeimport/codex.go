@@ -25,7 +25,16 @@ const (
 	codexGlobalStateFile = ".codex-global-state.json"
 	codexConfigFile      = "config.toml"
 	codexDefaultProvider = "openai"
+
+	// Codex local compaction keeps recent user messages under a bounded budget
+	// and a final summary instead of replaying every historical tool result into
+	// the next model request. Relay preserves the full imported JSONL for the UI,
+	// then writes the same kind of replacement-history checkpoint for resume.
+	codexImportedUserHistoryMaxRunes = 24_000
+	codexImportedSummaryMaxRunes     = 16_000
 )
+
+const codexCompactionSummaryPrefix = "Another language model started to solve this problem and produced a summary of its thinking process. You also have access to the state of the tools that were used by that language model. Use this to build on the work that has already been done and avoid duplicating work. Here is the summary produced by the other language model, use the information in this summary to assist with your own analysis:"
 
 var (
 	appendCodexIndexForImport  = appendCodexIndex
@@ -404,14 +413,102 @@ func synthesizeCodexSession(source transcript, sessionID, title, cwd, modelProvi
 		}
 	}
 	completeTurn(now.Add(time.Duration(len(source.Entries)+1) * time.Millisecond).Format(time.RFC3339Nano))
+	replacementHistory, replacementVisibleBytes := codexImportedReplacementHistory(source)
+	checkpointTimestamp := now.Add(time.Duration(len(source.Entries)+2) * time.Millisecond).Format(time.RFC3339Nano)
 	items = append(items, map[string]any{
-		"timestamp": now.Add(time.Duration(len(source.Entries)+2) * time.Millisecond).Format(time.RFC3339Nano),
+		"timestamp": checkpointTimestamp,
+		"type":      "compacted",
+		"payload": map[string]any{
+			"message":             codexImportedCompactionSummary(source),
+			"replacement_history": replacementHistory,
+		},
+	})
+	replacementTokens := int64((replacementVisibleBytes + 3) / 4)
+	items = append(items, map[string]any{
+		"timestamp": checkpointTimestamp,
+		"type":      "event_msg",
+		"payload": map[string]any{
+			"type": "token_count",
+			"info": map[string]any{
+				"total_token_usage": map[string]any{"total_tokens": replacementTokens},
+				"last_token_usage":  map[string]any{"total_tokens": replacementTokens},
+			},
+		},
+	})
+	items = append(items, map[string]any{
+		"timestamp": now.Add(time.Duration(len(source.Entries)+3) * time.Millisecond).Format(time.RFC3339Nano),
 		"type":      "event_msg",
 		"payload": map[string]any{
 			"type": "thread_name_updated", "thread_id": sessionID, "thread_name": title,
 		},
 	})
 	return jsonLines(items)
+}
+
+func codexImportedReplacementHistory(source transcript) ([]map[string]any, int) {
+	type retainedMessage struct {
+		text string
+	}
+	retained := make([]retainedMessage, 0)
+	remaining := codexImportedUserHistoryMaxRunes
+	for index := len(source.Entries) - 1; index >= 0 && remaining > 0; index-- {
+		item := source.Entries[index]
+		if item.Kind != "context" && (item.Kind != "message" || item.Role == "assistant") {
+			continue
+		}
+		text := strings.TrimSpace(item.Text)
+		if text == "" {
+			continue
+		}
+		runes := []rune(text)
+		if len(runes) > remaining {
+			text = strings.TrimSpace(string(runes[len(runes)-remaining:]))
+			runes = []rune(text)
+		}
+		retained = append(retained, retainedMessage{text: text})
+		remaining -= len(runes)
+	}
+
+	replacement := []map[string]any{codexReplacementMessage("developer", codexImportedHistoryInstruction)}
+	visibleBytes := len(codexImportedHistoryInstruction)
+	for index := len(retained) - 1; index >= 0; index-- {
+		replacement = append(replacement, codexReplacementMessage("user", retained[index].text))
+		visibleBytes += len(retained[index].text)
+	}
+	summary := codexImportedCompactionSummary(source)
+	replacement = append(replacement, codexReplacementMessage("user", summary))
+	visibleBytes += len(summary)
+	return replacement, visibleBytes
+}
+
+func codexReplacementMessage(role, text string) map[string]any {
+	contentType := "input_text"
+	if role == "assistant" {
+		contentType = "output_text"
+	}
+	return map[string]any{
+		"type": "message", "role": role,
+		"content": []map[string]string{{"type": contentType, "text": text}},
+	}
+}
+
+func codexImportedCompactionSummary(source transcript) string {
+	lastAssistant := "没有可用的历史助手回复。"
+	for index := len(source.Entries) - 1; index >= 0; index-- {
+		item := source.Entries[index]
+		if item.Kind == "message" && item.Role == "assistant" && strings.TrimSpace(item.Text) != "" {
+			lastAssistant = clip(item.Text, codexImportedSummaryMaxRunes)
+			break
+		}
+	}
+	return strings.Join([]string{
+		codexCompactionSummaryPrefix,
+		"[Relay 导入摘要]",
+		"完整的发送方授权历史仍保存在本任务中供查看；为避免超过模型上下文，继续对话时只加载最近的用户请求和这份摘要。历史工具调用与结果不得自动重新执行。",
+		"任务标题：" + source.Title,
+		"最近一条历史助手回复：",
+		lastAssistant,
+	}, "\n")
 }
 
 func entryStartsUserTurn(item entry) bool {
